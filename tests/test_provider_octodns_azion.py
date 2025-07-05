@@ -542,8 +542,8 @@ class TestAzionProvider(unittest.TestCase):
         self.assertTrue(callable(getattr(self.provider, '_apply')))
 
     def test_supports_root_ns(self):
-        # Test that provider supports root NS records
-        self.assertTrue(self.provider.SUPPORTS_ROOT_NS)
+        # Test that provider doesn't support root NS records
+        self.assertFalse(self.provider.SUPPORTS_ROOT_NS)
 
     def test_supports_dynamic(self):
         # Test that provider doesn't support dynamic records

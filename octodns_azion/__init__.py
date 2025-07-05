@@ -140,7 +140,7 @@ class AzionClient(object):
 class AzionProvider(BaseProvider):
     SUPPORTS_GEO = False
     SUPPORTS_DYNAMIC = False
-    SUPPORTS_ROOT_NS = True
+    SUPPORTS_ROOT_NS = False
     SUPPORTS = set(
         ('A', 'AAAA', 'ALIAS', 'CAA', 'CNAME', 'MX', 'NS', 'PTR', 'TXT', 'SRV')
     )
