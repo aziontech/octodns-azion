@@ -26,8 +26,8 @@ octodns-azion==1.0.0
 
 ```
 # Start with the latest/specific versions and don't just copy what's here
--e git+https://git@github.com/octodns/octodns.git@9da19749e28f68407a1c246dfdf65663cdc1c422#egg=octodns
--e git+https://git@github.com/octodns/octodns-azion.git@ec9661f8b335241ae4746eea467a8509205e6a30#egg=octodns_azion
+-e git+https://git@github.com/octodns/octodns.git@07c72e5a2f52a87b94fecf5c18697b16832253b0#egg=octodns
+-e git+https://git@github.com/aziontech/octodns-azion.git@29197e11e2f2b8783b13863986fae86ec78347a4#egg=octodns_azion
 ```
 
 ## Configuration
@@ -48,7 +48,7 @@ AzionProvider supports A, AAAA, ALIAS (ANAME), CAA, CNAME, MX, NS, PTR, TXT, and
 
 ### Root NS Records
 
-AzionProvider supports full root NS record management.
+AzionProvider does not support root NS record management.
 
 ### Dynamic
 
