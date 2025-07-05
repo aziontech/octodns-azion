@@ -360,6 +360,23 @@ class TestAzionProvider(unittest.TestCase):
             params[0]['answers_list'], ['10 20 80 server.example.com']
         )
 
+    def test_params_for_ptr(self):
+        from octodns.record import Record
+
+        zone = Zone('1.168.192.in-addr.arpa.', [])
+        record = Record.new(
+            zone,
+            '10',
+            {'type': 'PTR', 'ttl': 300, 'value': 'host.example.com.'},
+        )
+
+        params = list(self.provider._params_for_PTR(record))
+        self.assertEqual(len(params), 1)
+        self.assertEqual(params[0]['entry'], '10.1.168.192.in-addr.arpa')
+        self.assertEqual(params[0]['record_type'], 'PTR')
+        self.assertEqual(params[0]['ttl'], 300)
+        self.assertEqual(params[0]['answers_list'], ['host.example.com'])
+
     def test_params_for_txt(self):
         from octodns.record import Record
 

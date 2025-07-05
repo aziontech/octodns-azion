@@ -456,6 +456,15 @@ class AzionProvider(BaseProvider):
                 'answers_list': [answer],
             }
 
+    def _params_for_PTR(self, record):
+        '''Handle PTR records (reverse DNS lookups)'''
+        yield {
+            'entry': self._get_full_name(record),
+            'record_type': 'PTR',
+            'ttl': record.ttl,
+            'answers_list': [record.value.rstrip('.')],
+        }
+
     def _params_for_TXT(self, record):
         for value in record.values:
             # Ensure TXT values are quoted
