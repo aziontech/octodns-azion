@@ -396,7 +396,7 @@ class AzionProvider(BaseProvider):
     def _params_for_multiple(self, record):
         for value in record.values:
             yield {
-                'entry': self._get_full_name(record),
+                'entry': '@' if not record.name else record.name,
                 'record_type': record._type,
                 'ttl': record.ttl,
                 'answers_list': [value],
@@ -410,7 +410,7 @@ class AzionProvider(BaseProvider):
         for value in record.values:
             answer = f'{value.flags} {value.tag} "{value.value}"'
             yield {
-                'entry': self._get_full_name(record),
+                'entry': '@' if not record.name else record.name,
                 'record_type': record._type,
                 'ttl': record.ttl,
                 'answers_list': [answer],
@@ -418,7 +418,7 @@ class AzionProvider(BaseProvider):
 
     def _params_for_single(self, record):
         yield {
-            'entry': self._get_full_name(record),
+            'entry': '@' if not record.name else record.name,
             'record_type': record._type,
             'ttl': record.ttl,
             'answers_list': [record.value.rstrip('.')],
@@ -429,8 +429,8 @@ class AzionProvider(BaseProvider):
     def _params_for_ALIAS(self, record):
         '''Convert ALIAS records to ANAME for Azion API'''
         yield {
-            'entry': self._get_full_name(record),
-            'record_type': 'ANAME',  # Convert ALIAS to ANAME for API
+            'entry': '@' if not record.name else record.name,
+            'record_type': 'ANAME',
             'ttl': record.ttl,
             'answers_list': [record.value.rstrip('.')],
         }
@@ -439,7 +439,7 @@ class AzionProvider(BaseProvider):
         for value in record.values:
             answer = f'{value.preference} {value.exchange.rstrip(".")}'
             yield {
-                'entry': self._get_full_name(record),
+                'entry': '@' if not record.name else record.name,
                 'record_type': record._type,
                 'ttl': record.ttl,
                 'answers_list': [answer],
@@ -450,7 +450,7 @@ class AzionProvider(BaseProvider):
             target = value.target.rstrip('.') if value.target != '.' else '.'
             answer = f'{value.priority} {value.weight} {value.port} {target}'
             yield {
-                'entry': self._get_full_name(record),
+                'entry': '@' if not record.name else record.name,
                 'record_type': record._type,
                 'ttl': record.ttl,
                 'answers_list': [answer],
@@ -459,7 +459,7 @@ class AzionProvider(BaseProvider):
     def _params_for_PTR(self, record):
         '''Handle PTR records (reverse DNS lookups)'''
         yield {
-            'entry': self._get_full_name(record),
+            'entry': '@' if not record.name else record.name,
             'record_type': 'PTR',
             'ttl': record.ttl,
             'answers_list': [record.value.rstrip('.')],
@@ -474,18 +474,11 @@ class AzionProvider(BaseProvider):
                 else value
             )
             yield {
-                'entry': self._get_full_name(record),
+                'entry': '@' if not record.name else record.name,
                 'record_type': record._type,
                 'ttl': record.ttl,
                 'answers_list': [quoted_value],
             }
-
-    def _get_full_name(self, record):
-        '''Get the full DNS name for a record'''
-        zone_name = record.zone.name.rstrip('.')
-        if record.name == '':
-            return zone_name
-        return f'{record.name}.{zone_name}'
 
     def _apply_Create(self, change):
         new = change.new

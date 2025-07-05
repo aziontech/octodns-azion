@@ -159,23 +159,6 @@ class TestAzionProvider(unittest.TestCase):
         }
         self.assertEqual(result, expected)
 
-    def test_get_full_name(self):
-        zone = Zone("example.com.", [])
-
-        # Root record
-        record = Record.new(
-            zone, "", {"type": "A", "ttl": 300, "value": "1.2.3.4"}
-        )
-        self.assertEqual(self.provider._get_full_name(record), "example.com")
-
-        # Subdomain record
-        record = Record.new(
-            zone, "www", {"type": "A", "ttl": 300, "value": "1.2.3.4"}
-        )
-        self.assertEqual(
-            self.provider._get_full_name(record), "www.example.com"
-        )
-
     @patch.object(AzionProvider, "_get_zone_id_by_name")
     def test_zone_records_not_found(self, mock_get_zone_id):
         mock_get_zone_id.side_effect = AzionClientNotFound()
@@ -277,7 +260,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_ALIAS(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], 'example.com')  # Root record
+        self.assertEqual(params[0]['entry'], '@')
         self.assertEqual(
             params[0]['record_type'], 'ANAME'
         )  # Converted to ANAME
@@ -302,7 +285,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_CAA(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], 'test.example.com')
+        self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'CAA')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(
@@ -325,7 +308,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_MX(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], 'test.example.com')
+        self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'MX')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(params[0]['answers_list'], ['10 mail.example.com'])
@@ -353,7 +336,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_SRV(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], '_http._tcp.example.com')
+        self.assertEqual(params[0]['entry'], '_http._tcp')
         self.assertEqual(params[0]['record_type'], 'SRV')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(
@@ -372,7 +355,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_PTR(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], '10.1.168.192.in-addr.arpa')
+        self.assertEqual(params[0]['entry'], '10')
         self.assertEqual(params[0]['record_type'], 'PTR')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(params[0]['answers_list'], ['host.example.com'])
@@ -393,7 +376,7 @@ class TestAzionProvider(unittest.TestCase):
 
         params = list(self.provider._params_for_TXT(record))
         self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]['entry'], 'test.example.com')
+        self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'TXT')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(
@@ -834,7 +817,7 @@ class TestAzionProvider(unittest.TestCase):
         results = list(self.provider._params_for_single(record))
         self.assertEqual(len(results), 1)
         expected = {
-            'entry': 'test.example.com',
+            'entry': 'test',
             'record_type': 'CNAME',
             'ttl': 300,
             'answers_list': ['target.example.com'],
@@ -993,26 +976,6 @@ class TestAzionProvider(unittest.TestCase):
             result = self.provider.list_zones()
             expected = ['example.com.', 'test.org.', 'backup.net.']
             self.assertEqual(sorted(result), sorted(expected))
-
-    def test_get_full_name_root_record(self):
-        # Test branch coverage for root record (empty name) in _get_full_name
-        zone = Zone('example.com.', [])
-        record = Record.new(
-            zone, '', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
-        )
-
-        result = self.provider._get_full_name(record)
-        self.assertEqual(result, 'example.com')
-
-    def test_get_full_name_subdomain_record(self):
-        # Test branch coverage for subdomain record in _get_full_name
-        zone = Zone('example.com.', [])
-        record = Record.new(
-            zone, 'www', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
-        )
-
-        result = self.provider._get_full_name(record)
-        self.assertEqual(result, 'www.example.com')
 
     def test_params_for_txt_already_quoted(self):
         # Test branch coverage for TXT values that are already quoted
