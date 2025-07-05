@@ -20,12 +20,7 @@ def version():
 
 description, long_description = descriptions()
 
-tests_require = (
-    'pytest',
-    'pytest-cov',
-    'pytest-network',
-    # TODO: other test-time requirements
-)
+tests_require = ('pytest', 'pytest-cov', 'pytest-network')
 
 setup(
     author='Marcus Grando',
@@ -47,10 +42,7 @@ setup(
         ),
         'test': tests_require,
     },
-    install_requires=(
-        'octodns>=1.5.0',
-        # TODO: other requirements
-    ),
+    install_requires=('octodns>=1.12.0',),
     license='MIT',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -58,6 +50,6 @@ setup(
     packages=find_packages(),
     python_requires='>=3.9',
     tests_require=tests_require,
-    url='https://github.com/octodns/octodns-azion',
+    url='https://github.com/aziontech/octodns-azion',
     version=version(),
 )

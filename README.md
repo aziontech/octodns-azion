@@ -1,6 +1,4 @@
-TODO: Review this README and add or modify as necessary.
-
-## DNS provider for octoDNS
+## Azion DNS provider for octoDNS
 
 An [octoDNS](https://github.com/octodns/octodns/) provider that targets [DNS](https://api.azion.com/).
 
@@ -20,8 +18,8 @@ Pinning specific versions or SHAs is recommended to avoid unplanned upgrades.
 
 ```
 # Start with the latest versions and don't just copy what's here
-octodns==0.9.14
-octodns-azion==0.0.1
+octodns==1.12.0
+octodns-azion==1.0.0
 ```
 
 ##### SHAs
@@ -32,27 +30,30 @@ octodns-azion==0.0.1
 -e git+https://git@github.com/octodns/octodns-azion.git@ec9661f8b335241ae4746eea467a8509205e6a30#egg=octodns_azion
 ```
 
-### Configuration
+## Configuration
 
 ```yaml
 providers:
   azion:
     class: octodns_azion.AzionProvider
-    # TODO
+    # Your Azion API token (required)
+    token: env/AZION_TOKEN
 ```
 
-### Support Information
+## Support Information
 
-#### Records
+### Records
 
-TODO: All octoDNS record types are supported.
+AzionProvider supports A, AAAA, ALIAS (ANAME), CAA, CNAME, MX, NS, PTR, TXT, and SRV record types.
 
-#### Dynamic
+### Root NS Records
 
-TODO: AzionProvider does not support dynamic records.
+AzionProvider supports full root NS record management.
+
+### Dynamic
+
+AzionProvider does not support dynamic records.
 
 ### Development
 
 See the [/script/](/script/) directory for some tools to help with the development process. They generally follow the [Script to rule them all](https://github.com/github/scripts-to-rule-them-all) pattern. Most useful is `./script/bootstrap` which will create a venv and install both the runtime and development related requirements. It will also hook up a pre-commit hook that covers most of what's run by CI.
-
-TODO: any provider specific setup, a docker compose to run things locally etc?

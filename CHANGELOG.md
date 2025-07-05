@@ -1,11 +1,3 @@
-## TODO: v0.0.1 - 20??-??-?? - Moving
+## v1.0.0 - 2025-07-05 - First version
 
-#### Nothworthy Changes
-
-* Initial extraction of AzionProvider from octoDNS core
-
-TODO: anything else
-
-#### Stuff
-
-TODO: anything else
+* Initial version of AzionProvider
