@@ -19,7 +19,7 @@ Pinning specific versions or SHAs is recommended to avoid unplanned upgrades.
 ```
 # Start with the latest versions and don't just copy what's here
 octodns==1.12.0
-octodns-azion==1.0.0
+octodns-azion==1.0.1
 ```
 
 ##### SHAs
