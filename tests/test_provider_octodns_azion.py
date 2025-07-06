@@ -450,6 +450,24 @@ class TestAzionProvider(unittest.TestCase):
             zone_id = self.provider._get_zone_id_by_name('example.com')
             self.assertEqual(zone_id, 25)
 
+    def test_data_for_ns_record(self):
+        records = [
+            {
+                'record_id': 1,
+                'ttl': 300,
+                'answers_list': ['ns1.example.com', 'ns2.example.com'],
+            }
+        ]
+
+        result = self.provider._data_for_NS('NS', records)
+
+        expected = {
+            'ttl': 300,
+            'type': 'NS',
+            'values': ['ns1.example.com.', 'ns2.example.com.'],
+        }
+        self.assertEqual(result, expected)
+
     def test_data_for_srv_record(self):
         records = [
             {
@@ -1169,6 +1187,27 @@ class TestAzionProvider(unittest.TestCase):
 
         result = self.provider._data_for_PTR('PTR', records)
         self.assertEqual(result['value'], 'example.com.')  # Should keep dot
+
+    def test_data_for_ns_without_dot(self):
+        # Test branch coverage for NS value without trailing dot
+        records = [
+            {
+                'ttl': 300,
+                'answers_list': [
+                    'ns1.example.com',
+                    'ns2.example.com.',
+                ],  # Mixed
+            }
+        ]
+
+        result = self.provider._data_for_NS('NS', records)
+        self.assertEqual(len(result['values']), 2)
+        self.assertEqual(
+            result['values'][0], 'ns1.example.com.'
+        )  # Should add dot
+        self.assertEqual(
+            result['values'][1], 'ns2.example.com.'
+        )  # Should keep dot
 
     def test_data_for_txt_with_quotes(self):
         # Test branch coverage for TXT values with quotes

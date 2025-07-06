@@ -243,6 +243,16 @@ class AzionProvider(BaseProvider):
                     )
         return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
 
+    def _data_for_NS(self, _type, records):
+        values = []
+        for record in records:
+            answers = record.get('answers_list', [record.get('value', '')])
+            for answer in answers:
+                if not answer.endswith('.'):
+                    answer += '.'
+                values.append(answer)
+        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
+
     def _data_for_SRV(self, _type, records):
         values = []
         for record in records:
@@ -384,6 +394,7 @@ class AzionProvider(BaseProvider):
 
     _params_for_A = _params_for_multiple
     _params_for_AAAA = _params_for_multiple
+    _params_for_NS = _params_for_multiple
 
     def _params_for_CAA(self, record):
         for value in record.values:
