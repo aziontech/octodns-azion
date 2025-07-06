@@ -86,7 +86,7 @@ class AzionClient(object):
     def zone_create(self, name):
         '''Create a new zone'''
         path = '/intelligent_dns'
-        data = {'name': name, 'is_active': True}
+        data = {'name': name, 'domain': name, 'is_active': True}
         return self._request('POST', path, data=data).json()
 
     def zone_delete(self, zone_id):
