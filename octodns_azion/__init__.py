@@ -57,7 +57,7 @@ class AzionClient(object):
         ret = []
 
         page = 1
-        page_size = 200
+        page_size = 100
 
         # Continue fetching pages until no more data or no next link
         while page:
@@ -78,21 +78,11 @@ class AzionClient(object):
 
         return ret
 
-    def zone(self, zone_id):
-        '''Get a specific zone by ID'''
-        path = f'/intelligent_dns/{zone_id}'
-        return self._request('GET', path).json()
-
     def zone_create(self, name):
         '''Create a new zone'''
         path = '/intelligent_dns'
         data = {'name': name, 'domain': name, 'is_active': True}
         return self._request('POST', path, data=data).json()
-
-    def zone_delete(self, zone_id):
-        '''Delete a zone'''
-        path = f'/intelligent_dns/{zone_id}'
-        self._request('DELETE', path)
 
     def records(self, zone_id):
         '''Get all records for a zone'''
@@ -100,7 +90,7 @@ class AzionClient(object):
         ret = []
 
         page = 1
-        page_size = 200
+        page_size = 100
 
         # Continue fetching pages until no more data or no next link
         while page:
@@ -253,16 +243,6 @@ class AzionProvider(BaseProvider):
                     )
         return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
 
-    def _data_for_NS(self, _type, records):
-        values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            for answer in answers:
-                if not answer.endswith('.'):
-                    answer += '.'
-                values.append(answer)
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
-
     def _data_for_SRV(self, _type, records):
         values = []
         for record in records:
@@ -404,7 +384,6 @@ class AzionProvider(BaseProvider):
 
     _params_for_A = _params_for_multiple
     _params_for_AAAA = _params_for_multiple
-    _params_for_NS = _params_for_multiple
 
     def _params_for_CAA(self, record):
         for value in record.values:

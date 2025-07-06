@@ -450,24 +450,6 @@ class TestAzionProvider(unittest.TestCase):
             zone_id = self.provider._get_zone_id_by_name('example.com')
             self.assertEqual(zone_id, 25)
 
-    def test_data_for_ns_record(self):
-        records = [
-            {
-                'record_id': 1,
-                'ttl': 300,
-                'answers_list': ['ns1.example.com', 'ns2.example.com'],
-            }
-        ]
-
-        result = self.provider._data_for_NS('NS', records)
-
-        expected = {
-            'ttl': 300,
-            'type': 'NS',
-            'values': ['ns1.example.com.', 'ns2.example.com.'],
-        }
-        self.assertEqual(result, expected)
-
     def test_data_for_srv_record(self):
         records = [
             {
@@ -538,9 +520,7 @@ class TestAzionProvider(unittest.TestCase):
 
         # Test that methods exist
         self.assertTrue(hasattr(client, 'zones'))
-        self.assertTrue(hasattr(client, 'zone'))
         self.assertTrue(hasattr(client, 'zone_create'))
-        self.assertTrue(hasattr(client, 'zone_delete'))
         self.assertTrue(hasattr(client, 'records'))
         self.assertTrue(hasattr(client, 'record_create'))
         self.assertTrue(hasattr(client, 'record_update'))
@@ -548,9 +528,7 @@ class TestAzionProvider(unittest.TestCase):
 
         # Test that methods are callable
         self.assertTrue(callable(client.zones))
-        self.assertTrue(callable(client.zone))
         self.assertTrue(callable(client.zone_create))
-        self.assertTrue(callable(client.zone_delete))
         self.assertTrue(callable(client.records))
         self.assertTrue(callable(client.record_create))
         self.assertTrue(callable(client.record_update))
@@ -648,20 +626,6 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(result, [])
 
     @patch.object(AzionClient, '_request')
-    def test_client_zone_method(self, mock_request):
-        # Test zone method
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            'results': {'id': 1, 'name': 'example.com'}
-        }
-        mock_request.return_value = mock_response
-
-        client = AzionClient('test-token')
-        result = client.zone(1)
-
-        self.assertEqual(result, {'results': {'id': 1, 'name': 'example.com'}})
-
-    @patch.object(AzionClient, '_request')
     def test_client_zone_create_method(self, mock_request):
         # Test zone_create method
         mock_response = Mock()
@@ -674,17 +638,6 @@ class TestAzionProvider(unittest.TestCase):
         result = client.zone_create('example.com')
 
         self.assertEqual(result, {'results': {'id': 1, 'name': 'example.com'}})
-
-    @patch.object(AzionClient, '_request')
-    def test_client_zone_delete_method(self, mock_request):
-        # Test zone_delete method
-        mock_response = Mock()
-        mock_request.return_value = mock_response
-
-        client = AzionClient('test-token')
-        client.zone_delete(1)
-
-        mock_request.assert_called_once()
 
     @patch.object(AzionClient, '_request')
     def test_client_records_with_pagination(self, mock_request):
@@ -1207,27 +1160,6 @@ class TestAzionProvider(unittest.TestCase):
 
         result = self.provider._data_for_PTR('PTR', records)
         self.assertEqual(result['value'], 'example.com.')  # Should keep dot
-
-    def test_data_for_ns_without_dot(self):
-        # Test branch coverage for NS value without trailing dot
-        records = [
-            {
-                'ttl': 300,
-                'answers_list': [
-                    'ns1.example.com',
-                    'ns2.example.com.',
-                ],  # Mixed
-            }
-        ]
-
-        result = self.provider._data_for_NS('NS', records)
-        self.assertEqual(len(result['values']), 2)
-        self.assertEqual(
-            result['values'][0], 'ns1.example.com.'
-        )  # Should add dot
-        self.assertEqual(
-            result['values'][1], 'ns2.example.com.'
-        )  # Should keep dot
 
     def test_data_for_txt_with_quotes(self):
         # Test branch coverage for TXT values with quotes
