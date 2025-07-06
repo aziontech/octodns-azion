@@ -630,14 +630,23 @@ class TestAzionProvider(unittest.TestCase):
         # Test zone_create method
         mock_response = Mock()
         mock_response.json.return_value = {
-            'results': {'id': 1, 'name': 'example.com'}
+            'results': {'id': 1, 'name': 'example.com', 'domain': 'example.com'}
         }
         mock_request.return_value = mock_response
 
         client = AzionClient('test-token')
         result = client.zone_create('example.com')
 
-        self.assertEqual(result, {'results': {'id': 1, 'name': 'example.com'}})
+        self.assertEqual(
+            result,
+            {
+                'results': {
+                    'id': 1,
+                    'name': 'example.com',
+                    'domain': 'example.com',
+                }
+            },
+        )
 
     @patch.object(AzionClient, '_request')
     def test_client_records_with_pagination(self, mock_request):
