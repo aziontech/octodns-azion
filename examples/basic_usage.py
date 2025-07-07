@@ -6,12 +6,10 @@ This example shows how to:
 1. Initialize the Azion provider
 2. List available zones
 3. Populate a zone with records
-4. Apply changes to a zone
 """
 
 import os
 import warnings
-import random
 
 # Suppress urllib3 SSL warnings
 warnings.filterwarnings("ignore", message=".*urllib3.*")
