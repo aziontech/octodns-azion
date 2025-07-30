@@ -8,7 +8,7 @@ from octodns.provider import ProviderException
 from octodns.provider.base import BaseProvider
 from octodns.record import Record
 
-__version__ = __VERSION__ = '1.0.1'
+__version__ = __VERSION__ = '1.0.2'
 
 
 class AzionClientException(ProviderException):
@@ -478,8 +478,22 @@ class AzionProvider(BaseProvider):
             self._client.record_create(zone_id, params)
 
     def _apply_Update(self, change):
-        self._apply_Delete(change)
-        self._apply_Create(change)
+        existing = change.existing
+        new = change.new
+        zone = existing.zone
+        zone_id = self._get_zone_id_by_name(zone.name)
+
+        # Find the existing record to update
+        for record in self.zone_records(zone):
+            if (
+                existing.name == record['name']
+                and existing._type == record['type']
+            ):
+                # Use record_update instead of delete/create
+                params_for = getattr(self, f'_params_for_{new._type}')
+                for params in params_for(new):
+                    self._client.record_update(zone_id, record['id'], params)
+                break
 
     def _apply_Delete(self, change):
         existing = change.existing

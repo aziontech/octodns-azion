@@ -859,16 +859,120 @@ class TestAzionProvider(unittest.TestCase):
         mock_get_zone_id.assert_called_once_with('example.com.')
         mock_record_create.assert_called_once()
 
-    @patch.object(AzionProvider, '_apply_Delete')
-    @patch.object(AzionProvider, '_apply_Create')
-    def test_apply_update_real(self, mock_apply_create, mock_apply_delete):
-        # Test _apply_Update calls delete then create
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_real(self, mock_zone_records, mock_get_zone_id):
+        # Test _apply_Update finds matching record and calls record_update
+        existing = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
+        )
+        new = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
+        )
         change = Mock()
+        change.existing = existing
+        change.new = new
 
-        self.provider._apply_Update(change)
+        # Mock zone records to return a matching record
+        mock_zone_records.return_value = [
+            {'id': 'record123', 'name': 'test', 'type': 'A'}
+        ]
+        mock_get_zone_id.return_value = 'zone123'
 
-        mock_apply_delete.assert_called_once_with(change)
-        mock_apply_create.assert_called_once_with(change)
+        # Mock the client's record_update method
+        with patch.object(
+            self.provider._client, 'record_update'
+        ) as mock_record_update:
+            self.provider._apply_Update(change)
+            mock_record_update.assert_called_once_with(
+                'zone123',
+                'record123',
+                {
+                    'entry': 'test',
+                    'record_type': 'A',
+                    'ttl': 600,
+                    'answers_list': ['5.6.7.8'],
+                },
+            )
+
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_no_matching_records(
+        self, mock_zone_records, mock_get_zone_id
+    ):
+        # Test _apply_Update when no matching records are found (branch coverage)
+        existing = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
+        )
+        new = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
+        )
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        # Mock zone records to return empty list (no records)
+        mock_zone_records.return_value = []
+        mock_get_zone_id.return_value = 'zone123'
+
+        # Mock the client's record_update method to ensure it's not called
+        with patch.object(
+            self.provider._client, 'record_update'
+        ) as mock_record_update:
+            self.provider._apply_Update(change)
+            # Should not call record_update when no matching records
+            mock_record_update.assert_not_called()
+
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_no_matching_records_different_name_type(
+        self, mock_zone_records, mock_get_zone_id
+    ):
+        # Test _apply_Update when records exist but don't match name/type (branch coverage)
+        existing = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
+        )
+        new = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
+        )
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        # Mock zone records to return records that don't match
+        mock_zone_records.return_value = [
+            {
+                'id': 'record123',
+                'name': 'different',
+                'type': 'A',
+            },  # Different name
+            {
+                'id': 'record456',
+                'name': 'test',
+                'type': 'CNAME',
+            },  # Different type
+        ]
+        mock_get_zone_id.return_value = 'zone123'
+
+        # Mock the client's record_update method to ensure it's not called
+        with patch.object(
+            self.provider._client, 'record_update'
+        ) as mock_record_update:
+            self.provider._apply_Update(change)
+            # Should not call record_update when no matching records
+            mock_record_update.assert_not_called()
 
     def test_apply_delete_no_matching_records(self):
         # Test _apply_Delete when no matching records are found (branch coverage)
