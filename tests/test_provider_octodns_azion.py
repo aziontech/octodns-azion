@@ -821,7 +821,7 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(result, expected)
 
     def test_params_for_multiple_with_values(self):
-        # Test _params_for_multiple with multiple values
+        # Test _params_for_multiple with multiple values (consolidated into single record)
         from octodns.record import Record
 
         zone = Zone('example.com.', [])
@@ -832,9 +832,13 @@ class TestAzionProvider(unittest.TestCase):
         )
 
         results = list(self.provider._params_for_multiple(record))
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]['answers_list'], ['1.2.3.4'])
-        self.assertEqual(results[1]['answers_list'], ['5.6.7.8'])
+        self.assertEqual(
+            len(results), 1
+        )  # Now returns single record with all values
+        self.assertEqual(results[0]['answers_list'], ['1.2.3.4', '5.6.7.8'])
+        self.assertEqual(results[0]['entry'], 'test')
+        self.assertEqual(results[0]['record_type'], 'A')
+        self.assertEqual(results[0]['ttl'], 300)
 
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionProvider, '_get_zone_id_by_name')
@@ -973,6 +977,51 @@ class TestAzionProvider(unittest.TestCase):
             self.provider._apply_Update(change)
             # Should not call record_update when no matching records
             mock_record_update.assert_not_called()
+
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_multiple_values(
+        self, mock_zone_records, mock_get_zone_id
+    ):
+        # Test _apply_Update with multiple values (consolidated payload)
+        existing = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 300, 'values': ['1.2.3.4']},
+        )
+        new = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 600, 'values': ['1.2.3.4', '5.6.7.8']},
+        )
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        # Mock zone records to return a matching record
+        mock_zone_records.return_value = [
+            {'id': 'record123', 'name': 'test', 'type': 'A'}
+        ]
+        mock_get_zone_id.return_value = 'zone123'
+
+        # Mock the client's record_update method
+        with patch.object(
+            self.provider._client, 'record_update'
+        ) as mock_record_update:
+            self.provider._apply_Update(change)
+            mock_record_update.assert_called_once_with(
+                'zone123',
+                'record123',
+                {
+                    'entry': 'test',
+                    'record_type': 'A',
+                    'ttl': 600,
+                    'answers_list': [
+                        '1.2.3.4',
+                        '5.6.7.8',
+                    ],  # All values in single payload
+                },
+            )
 
     def test_apply_delete_no_matching_records(self):
         # Test _apply_Delete when no matching records are found (branch coverage)

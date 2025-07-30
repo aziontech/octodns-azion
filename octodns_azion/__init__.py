@@ -384,13 +384,13 @@ class AzionProvider(BaseProvider):
         return exists
 
     def _params_for_multiple(self, record):
-        for value in record.values:
-            yield {
-                'entry': '@' if not record.name else record.name,
-                'record_type': record._type,
-                'ttl': record.ttl,
-                'answers_list': [value],
-            }
+        # Consolidate all values into a single record with multiple answers
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': list(record.values),
+        }
 
     _params_for_A = _params_for_multiple
     _params_for_AAAA = _params_for_multiple
@@ -483,7 +483,16 @@ class AzionProvider(BaseProvider):
         zone = existing.zone
         zone_id = self._get_zone_id_by_name(zone.name)
 
+        self.log.debug(
+            '_apply_Update: updating %s %s %s -> %s',
+            existing.fqdn,
+            existing._type,
+            getattr(existing, 'values', getattr(existing, 'value', None)),
+            getattr(new, 'values', getattr(new, 'value', None)),
+        )
+
         # Find the existing record to update
+        record_found = False
         for record in self.zone_records(zone):
             if (
                 existing.name == record['name']
@@ -492,8 +501,21 @@ class AzionProvider(BaseProvider):
                 # Use record_update instead of delete/create
                 params_for = getattr(self, f'_params_for_{new._type}')
                 for params in params_for(new):
+                    self.log.debug(
+                        '_apply_Update: updating record %s with params %s',
+                        record['id'],
+                        params,
+                    )
                     self._client.record_update(zone_id, record['id'], params)
+                record_found = True
                 break
+
+        if not record_found:
+            self.log.warning(
+                '_apply_Update: no matching record found for %s %s',
+                existing.fqdn,
+                existing._type,
+            )
 
     def _apply_Delete(self, change):
         existing = change.existing
