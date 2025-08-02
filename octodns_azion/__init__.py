@@ -508,13 +508,14 @@ class AzionProvider(BaseProvider):
             ):
                 # Use record_update instead of delete/create
                 params_for = getattr(self, f'_params_for_{new._type}')
-                for params in params_for(new):
-                    self.log.debug(
-                        '_apply_Update: updating record %s with params %s',
-                        record['id'],
-                        params,
-                    )
-                    self._client.record_update(zone_id, record['id'], params)
+                # Get the first (and only) params since we now consolidate all values
+                params = next(params_for(new))
+                self.log.debug(
+                    '_apply_Update: updating record %s with params %s',
+                    record['id'],
+                    params,
+                )
+                self._client.record_update(zone_id, record['id'], params)
                 record_found = True
                 break
 
