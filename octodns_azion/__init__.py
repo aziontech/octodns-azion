@@ -161,32 +161,52 @@ class AzionProvider(BaseProvider):
 
         return self._zone_cache[zone_name]
 
+    def _get_record_answers(self, records):
+        """Helper to extract answers from a consolidated record."""
+        record = records[0]
+        return (
+            record.get('answers_list', [record.get('value', '')]),
+            record['ttl'],
+        )
+
+    def _ensure_trailing_dot(self, value):
+        """Helper to ensure domain names have trailing dots."""
+        return value if value.endswith('.') else f'{value}.'
+
+    def _parse_structured_answer(self, answer, parts_count, parser_func):
+        """Helper to parse structured DNS record answers."""
+        parts = answer.split(' ', parts_count - 1)
+        return parser_func(parts) if len(parts) >= parts_count else None
+
     def _data_for_multiple(self, _type, records):
-        values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            values.extend(answers)
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
+        """Handle simple multiple value records (A, AAAA, NS)."""
+        answers, ttl = self._get_record_answers(records)
+        # For NS records, ensure trailing dots
+        if _type == 'NS':
+            answers = [self._ensure_trailing_dot(answer) for answer in answers]
+        return {'ttl': ttl, 'type': _type, 'values': answers}
 
     _data_for_A = _data_for_multiple
     _data_for_AAAA = _data_for_multiple
+    _data_for_NS = _data_for_multiple
 
     def _data_for_CAA(self, _type, records):
         values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            for answer in answers:
-                # CAA format: 'flags tag value'
-                parts = answer.split(' ', 2)
-                if len(parts) >= 3:
-                    values.append(
-                        {
-                            'flags': int(parts[0]),
-                            'tag': parts[1],
-                            'value': parts[2].strip('"'),
-                        }
-                    )
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
+        # Now we expect a single record with multiple answers in answers_list
+        record = records[0]
+        answers = record.get('answers_list', [record.get('value', '')])
+        for answer in answers:
+            # CAA format: 'flags tag value'
+            parts = answer.split(' ', 2)
+            if len(parts) >= 3:
+                values.append(
+                    {
+                        'flags': int(parts[0]),
+                        'tag': parts[1],
+                        'value': parts[2].strip('"'),
+                    }
+                )
+        return {'ttl': record['ttl'], 'type': _type, 'values': values}
 
     def _data_for_CNAME(self, _type, records):
         record = records[0]
@@ -228,68 +248,61 @@ class AzionProvider(BaseProvider):
 
     def _data_for_MX(self, _type, records):
         values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            # Process all MX answers in the list
-            for answer in answers:
-                # MX format: 'priority exchange'
-                parts = answer.split(' ', 1)
-                if len(parts) >= 2:
-                    exchange = parts[1]
-                    if not exchange.endswith('.'):
-                        exchange += '.'
-                    values.append(
-                        {'preference': int(parts[0]), 'exchange': exchange}
-                    )
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
-
-    def _data_for_NS(self, _type, records):
-        values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            for answer in answers:
-                if not answer.endswith('.'):
-                    answer += '.'
-                values.append(answer)
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
+        # Now we expect a single record with multiple answers in answers_list
+        record = records[0]
+        answers = record.get('answers_list', [record.get('value', '')])
+        # Process all MX answers in the list
+        for answer in answers:
+            # MX format: 'priority exchange'
+            parts = answer.split(' ', 1)
+            if len(parts) >= 2:
+                exchange = parts[1]
+                if not exchange.endswith('.'):
+                    exchange += '.'
+                values.append(
+                    {'preference': int(parts[0]), 'exchange': exchange}
+                )
+        return {'ttl': record['ttl'], 'type': _type, 'values': values}
 
     def _data_for_SRV(self, _type, records):
         values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            for answer in answers:
-                # SRV format: 'priority weight port target'
-                parts = answer.split(' ', 3)
-                if len(parts) >= 4:
-                    target = parts[3]
-                    if target != '.' and not target.endswith('.'):
-                        target += '.'
-                    values.append(
-                        {
-                            'priority': int(parts[0]),
-                            'weight': int(parts[1]),
-                            'port': int(parts[2]),
-                            'target': target,
-                        }
-                    )
-        return {'type': _type, 'ttl': records[0]['ttl'], 'values': values}
+        # Now we expect a single record with multiple answers in answers_list
+        record = records[0]
+        answers = record.get('answers_list', [record.get('value', '')])
+        for answer in answers:
+            # SRV format: 'priority weight port target'
+            parts = answer.split(' ', 3)
+            if len(parts) >= 4:
+                target = parts[3]
+                if target != '.' and not target.endswith('.'):
+                    target += '.'
+                values.append(
+                    {
+                        'priority': int(parts[0]),
+                        'weight': int(parts[1]),
+                        'port': int(parts[2]),
+                        'target': target,
+                    }
+                )
+        return {'type': _type, 'ttl': record['ttl'], 'values': values}
 
     def _data_for_TXT(self, _type, records):
+        """Handle TXT records with quote removal and semicolon escaping."""
+        answers, ttl = self._get_record_answers(records)
+
         values = []
-        for record in records:
-            answers = record.get('answers_list', [record.get('value', '')])
-            for answer in answers:
-                # Remove quotes if present
-                if (
-                    answer.startswith('"')
-                    and answer.endswith('"')
-                    and len(answer) > 2
-                ):
-                    answer = answer[1:-1]
-                # Escape semicolons for octoDNS compatibility
-                answer = answer.replace(';', '\\;')
-                values.append(answer)
-        return {'ttl': records[0]['ttl'], 'type': _type, 'values': values}
+        for answer in answers:
+            # Remove quotes if present
+            if (
+                answer.startswith('"')
+                and answer.endswith('"')
+                and len(answer) > 2
+            ):
+                answer = answer[1:-1]
+            # Escape semicolons for octoDNS compatibility
+            values.append(answer.replace(';', '\\;'))
+
+        return {'ttl': ttl, 'type': _type, 'values': values}
 
     def zone_records(self, zone):
         if zone.name not in self._zone_records:

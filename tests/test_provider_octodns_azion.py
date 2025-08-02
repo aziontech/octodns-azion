@@ -76,10 +76,8 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(provider.id, "test")
 
     def test_data_for_a_record(self):
-        records = [
-            {"ttl": 300, "answers_list": ["1.2.3.4"]},
-            {"ttl": 300, "answers_list": ["5.6.7.8"]},
-        ]
+        # Now we expect a single record with multiple answers in answers_list
+        records = [{"ttl": 300, "answers_list": ["1.2.3.4", "5.6.7.8"]}]
 
         result = self.provider._data_for_A("A", records)
 
@@ -139,12 +137,15 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(result, expected)
 
     def test_data_for_txt_record(self):
+        # Now we expect a single record with multiple answers in answers_list
         records = [
             {
                 "ttl": 300,
-                "answers_list": ['"v=spf1 include:_spf.example.com ~all"'],
-            },
-            {"ttl": 300, "answers_list": ['"another txt record"']},
+                "answers_list": [
+                    '"v=spf1 include:_spf.example.com ~all"',
+                    '"another txt record"',
+                ],
+            }
         ]
 
         result = self.provider._data_for_TXT("TXT", records)
@@ -1635,6 +1636,45 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(mock_apply_create.call_count, 2)
         mock_apply_create.assert_any_call(change1)
         mock_apply_create.assert_any_call(change2)
+
+    def test_parse_structured_answer_insufficient_parts(self):
+        # Test _parse_structured_answer when parts_count is not met (covers line 179)
+        def dummy_parser(parts):
+            return {'parsed': True}
+
+        # Test with insufficient parts (should return None)
+        result = self.provider._parse_structured_answer(
+            'single', 3, dummy_parser
+        )
+        self.assertIsNone(result)
+
+        # Test with sufficient parts (should call parser)
+        result = self.provider._parse_structured_answer(
+            'one two three', 3, dummy_parser
+        )
+        self.assertEqual(result, {'parsed': True})
+
+    def test_get_record_answers_helper(self):
+        # Test _get_record_answers helper method
+        records = [{'ttl': 300, 'answers_list': ['test1', 'test2']}]
+        answers, ttl = self.provider._get_record_answers(records)
+        self.assertEqual(answers, ['test1', 'test2'])
+        self.assertEqual(ttl, 300)
+
+        # Test with fallback to 'value' field
+        records = [{'ttl': 600, 'value': 'fallback'}]
+        answers, ttl = self.provider._get_record_answers(records)
+        self.assertEqual(answers, ['fallback'])
+        self.assertEqual(ttl, 600)
+
+    def test_ensure_trailing_dot_helper(self):
+        # Test _ensure_trailing_dot helper method
+        self.assertEqual(
+            self.provider._ensure_trailing_dot('example.com'), 'example.com.'
+        )
+        self.assertEqual(
+            self.provider._ensure_trailing_dot('example.com.'), 'example.com.'
+        )
 
 
 if __name__ == "__main__":
