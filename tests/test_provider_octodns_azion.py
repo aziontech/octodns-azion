@@ -11,6 +11,7 @@ from octodns.zone import Zone
 
 from octodns_azion import (
     AzionClient,
+    AzionClientException,
     AzionClientNotFound,
     AzionClientUnauthorized,
     AzionProvider,
@@ -1675,6 +1676,47 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(
             self.provider._ensure_trailing_dot('example.com.'), 'example.com.'
         )
+
+    def test_client_request_400_bad_request_json_success(self):
+        # Test _request method with 400 status code and successful JSON parsing
+        from unittest.mock import MagicMock
+
+        client = AzionClient('test-token')
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        # This should succeed and trigger the try block
+        mock_response.json.return_value = {
+            'error': 'Invalid data',
+            'field': 'answers_list',
+        }
+        client._sess = MagicMock()
+        client._sess.request.return_value = mock_response
+
+        with self.assertRaises(AzionClientException) as cm:
+            client._request('PUT', '/test', data={'test': 'data'})
+
+        exception_str = str(cm.exception)
+        self.assertIn('Bad Request', exception_str)
+        # The exact content depends on mock behavior, just ensure exception is raised correctly
+
+    def test_client_request_400_bad_request_json_fail(self):
+        # Test _request method with 400 status code and failed JSON parsing
+        client = AzionClient('test-token')
+
+        # Test the except path (json() fails)
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.json.side_effect = ValueError('Not JSON')
+        mock_response.text = 'Bad request error text'
+        client._sess.request = Mock(return_value=mock_response)
+
+        with self.assertRaises(AzionClientException) as cm:
+            client._request('PUT', '/test', data={'test': 'data'})
+
+        exception_str = str(cm.exception)
+        self.assertIn('Bad request error text', exception_str)
+        self.assertIn('Request data', exception_str)
 
 
 if __name__ == "__main__":

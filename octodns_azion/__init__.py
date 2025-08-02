@@ -48,6 +48,17 @@ class AzionClient(object):
             raise AzionClientUnauthorized()
         if resp.status_code == 404:
             raise AzionClientNotFound()
+        if resp.status_code == 400:
+            # Enhanced error for 400 Bad Request
+            try:
+                error_details = resp.json()
+                raise AzionClientException(
+                    f'Bad Request: {error_details}. Request data: {data}'
+                )
+            except:
+                raise AzionClientException(
+                    f'Bad Request: {resp.text}. Request data: {data}'
+                )
         resp.raise_for_status()
         return resp
 
