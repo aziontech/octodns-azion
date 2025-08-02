@@ -278,7 +278,12 @@ class TestAzionProvider(unittest.TestCase):
                 'type': 'CAA',
                 'ttl': 300,
                 'values': [
-                    {'flags': 0, 'tag': 'issue', 'value': 'ca.example.com'}
+                    {'flags': 0, 'tag': 'issue', 'value': 'ca.example.com'},
+                    {
+                        'flags': 0,
+                        'tag': 'iodef',
+                        'value': 'mailto:admin@example.com',
+                    },
                 ],
             },
         )
@@ -288,9 +293,14 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'CAA')
         self.assertEqual(params[0]['ttl'], 300)
-        self.assertEqual(
-            params[0]['answers_list'], ['0 issue "ca.example.com"']
-        )
+        # Order doesn't matter for the answers list, just check both are present
+        expected_answers = [
+            '0 issue "ca.example.com"',
+            '0 iodef "mailto:admin@example.com"',
+        ]
+        self.assertEqual(len(params[0]['answers_list']), 2)
+        for answer in expected_answers:
+            self.assertIn(answer, params[0]['answers_list'])
 
     def test_params_for_mx(self):
         from octodns.record import Record
@@ -302,7 +312,10 @@ class TestAzionProvider(unittest.TestCase):
             {
                 'type': 'MX',
                 'ttl': 300,
-                'values': [{'preference': 10, 'exchange': 'mail.example.com.'}],
+                'values': [
+                    {'preference': 10, 'exchange': 'mail.example.com.'},
+                    {'preference': 20, 'exchange': 'mail2.example.com.'},
+                ],
             },
         )
 
@@ -311,7 +324,10 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'MX')
         self.assertEqual(params[0]['ttl'], 300)
-        self.assertEqual(params[0]['answers_list'], ['10 mail.example.com'])
+        self.assertEqual(
+            params[0]['answers_list'],
+            ['10 mail.example.com', '20 mail2.example.com'],
+        )
 
     def test_params_for_srv(self):
         from octodns.record import Record
@@ -329,7 +345,13 @@ class TestAzionProvider(unittest.TestCase):
                         'weight': 20,
                         'port': 80,
                         'target': 'server.example.com.',
-                    }
+                    },
+                    {
+                        'priority': 20,
+                        'weight': 30,
+                        'port': 8080,
+                        'target': 'server2.example.com.',
+                    },
                 ],
             },
         )
@@ -340,7 +362,8 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['record_type'], 'SRV')
         self.assertEqual(params[0]['ttl'], 300)
         self.assertEqual(
-            params[0]['answers_list'], ['10 20 80 server.example.com']
+            params[0]['answers_list'],
+            ['10 20 80 server.example.com', '20 30 8080 server2.example.com'],
         )
 
     def test_params_for_ptr(self):
@@ -370,7 +393,10 @@ class TestAzionProvider(unittest.TestCase):
             {
                 'type': 'TXT',
                 'ttl': 300,
-                'values': ['v=spf1 include:_spf.example.com ~all'],
+                'values': [
+                    'v=spf1 include:_spf.example.com ~all',
+                    'v=DKIM1\\; k=rsa\\; p=MIGfMA0GCS...',
+                ],
             },
         )
 
@@ -379,10 +405,14 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'TXT')
         self.assertEqual(params[0]['ttl'], 300)
-        self.assertEqual(
-            params[0]['answers_list'],
-            ['"v=spf1 include:_spf.example.com ~all"'],
-        )
+        # Order doesn't matter for the answers list, just check both are present
+        expected_answers = [
+            '"v=spf1 include:_spf.example.com ~all"',
+            '"v=DKIM1\\; k=rsa\\; p=MIGfMA0GCS..."',
+        ]
+        self.assertEqual(len(params[0]['answers_list']), 2)
+        for answer in expected_answers:
+            self.assertIn(answer, params[0]['answers_list'])
 
     @patch.object(AzionClient, 'zones')
     @patch.object(AzionClient, 'records')
@@ -1124,9 +1154,10 @@ class TestAzionProvider(unittest.TestCase):
         )
 
         params_list = list(self.provider._params_for_TXT(record))
-        self.assertEqual(len(params_list), 2)
-        self.assertEqual(params_list[0]['answers_list'], ['"already quoted"'])
-        self.assertEqual(params_list[1]['answers_list'], ['"not quoted"'])
+        self.assertEqual(len(params_list), 1)
+        self.assertEqual(
+            params_list[0]['answers_list'], ['"already quoted"', '"not quoted"']
+        )
 
     def test_params_for_srv_with_dot_target(self):
         # Test branch coverage for SRV target that is just '.'

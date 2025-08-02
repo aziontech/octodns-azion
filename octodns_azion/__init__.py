@@ -8,7 +8,7 @@ from octodns.provider import ProviderException
 from octodns.provider.base import BaseProvider
 from octodns.record import Record
 
-__version__ = __VERSION__ = '1.0.2'
+__version__ = __VERSION__ = '1.0.3'
 
 
 class AzionClientException(ProviderException):
@@ -397,14 +397,16 @@ class AzionProvider(BaseProvider):
     _params_for_NS = _params_for_multiple
 
     def _params_for_CAA(self, record):
+        answers = []
         for value in record.values:
             answer = f'{value.flags} {value.tag} "{value.value}"'
-            yield {
-                'entry': '@' if not record.name else record.name,
-                'record_type': record._type,
-                'ttl': record.ttl,
-                'answers_list': [answer],
-            }
+            answers.append(answer)
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': answers,
+        }
 
     def _params_for_single(self, record):
         yield {
@@ -426,25 +428,29 @@ class AzionProvider(BaseProvider):
         }
 
     def _params_for_MX(self, record):
+        answers = []
         for value in record.values:
             answer = f'{value.preference} {value.exchange.rstrip(".")}'
-            yield {
-                'entry': '@' if not record.name else record.name,
-                'record_type': record._type,
-                'ttl': record.ttl,
-                'answers_list': [answer],
-            }
+            answers.append(answer)
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': answers,
+        }
 
     def _params_for_SRV(self, record):
+        answers = []
         for value in record.values:
             target = value.target.rstrip('.') if value.target != '.' else '.'
             answer = f'{value.priority} {value.weight} {value.port} {target}'
-            yield {
-                'entry': '@' if not record.name else record.name,
-                'record_type': record._type,
-                'ttl': record.ttl,
-                'answers_list': [answer],
-            }
+            answers.append(answer)
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': answers,
+        }
 
     def _params_for_PTR(self, record):
         '''Handle PTR records (reverse DNS lookups)'''
@@ -456,6 +462,7 @@ class AzionProvider(BaseProvider):
         }
 
     def _params_for_TXT(self, record):
+        answers = []
         for value in record.values:
             # Ensure TXT values are quoted
             quoted_value = (
@@ -463,12 +470,13 @@ class AzionProvider(BaseProvider):
                 if not (value.startswith('"') and value.endswith('"'))
                 else value
             )
-            yield {
-                'entry': '@' if not record.name else record.name,
-                'record_type': record._type,
-                'ttl': record.ttl,
-                'answers_list': [quoted_value],
-            }
+            answers.append(quoted_value)
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': answers,
+        }
 
     def _apply_Create(self, change):
         new = change.new
