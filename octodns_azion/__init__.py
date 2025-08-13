@@ -488,13 +488,7 @@ class AzionProvider(BaseProvider):
     def _params_for_TXT(self, record):
         answers = []
         for value in record.values:
-            # Ensure TXT values are quoted
-            quoted_value = (
-                f'"{value}"'
-                if not (value.startswith('"') and value.endswith('"'))
-                else value
-            )
-            answers.append(quoted_value)
+            answers.append(value)
         yield {
             'entry': '@' if not record.name else record.name,
             'record_type': record._type,
