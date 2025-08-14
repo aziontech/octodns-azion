@@ -1157,9 +1157,9 @@ class TestAzionProvider(unittest.TestCase):
 
         params_list = list(self.provider._params_for_TXT(record))
         self.assertEqual(len(params_list), 1)
-        # Keep exactly what came from the YAML, without normalizing/quotating
+        # OctoDNS normalizes removing external quotes; provider passes through
         self.assertEqual(
-            params_list[0]['answers_list'], ['"already quoted"', 'not quoted']
+            params_list[0]['answers_list'], ['already quoted', 'not quoted']
         )
 
     def test_params_for_srv_with_dot_target(self):
