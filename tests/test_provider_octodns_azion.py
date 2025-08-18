@@ -407,10 +407,10 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'TXT')
         self.assertEqual(params[0]['ttl'], 300)
-        # Order doesn't matter for the answers list, just check both are present
+        # Now we expect the raw values, without quotes
         expected_answers = [
-            '"v=spf1 include:_spf.example.com ~all"',
-            '"v=DKIM1\\; k=rsa\\; p=MIGfMA0GCS..."',
+            'v=spf1 include:_spf.example.com ~all',
+            'v=DKIM1\\; k=rsa\\; p=MIGfMA0GCS...',
         ]
         self.assertEqual(len(params[0]['answers_list']), 2)
         for answer in expected_answers:
@@ -1157,8 +1157,9 @@ class TestAzionProvider(unittest.TestCase):
 
         params_list = list(self.provider._params_for_TXT(record))
         self.assertEqual(len(params_list), 1)
+        # OctoDNS normalizes removing external quotes; provider passes through
         self.assertEqual(
-            params_list[0]['answers_list'], ['"already quoted"', '"not quoted"']
+            params_list[0]['answers_list'], ['already quoted', 'not quoted']
         )
 
     def test_params_for_srv_with_dot_target(self):
