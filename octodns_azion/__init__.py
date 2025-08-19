@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import defaultdict
 
 from requests import Session
@@ -8,7 +9,7 @@ from octodns.provider import ProviderException
 from octodns.provider.base import BaseProvider
 from octodns.record import Record
 
-__version__ = __VERSION__ = '1.0.3'
+__version__ = __VERSION__ = '1.0.4'
 
 
 class AzionClientException(ProviderException):
@@ -49,7 +50,6 @@ class AzionClient(object):
         if resp.status_code == 404:
             raise AzionClientNotFound()
         if resp.status_code == 400:
-            # Enhanced error for 400 Bad Request
             try:
                 error_details = resp.json()
                 raise AzionClientException(
@@ -203,7 +203,6 @@ class AzionProvider(BaseProvider):
 
     def _data_for_CAA(self, _type, records):
         values = []
-        # Now we expect a single record with multiple answers in answers_list
         record = records[0]
         answers = record.get('answers_list', [record.get('value', '')])
         for answer in answers:
@@ -259,10 +258,8 @@ class AzionProvider(BaseProvider):
 
     def _data_for_MX(self, _type, records):
         values = []
-        # Now we expect a single record with multiple answers in answers_list
         record = records[0]
         answers = record.get('answers_list', [record.get('value', '')])
-        # Process all MX answers in the list
         for answer in answers:
             # MX format: 'priority exchange'
             parts = answer.split(' ', 1)
@@ -277,7 +274,6 @@ class AzionProvider(BaseProvider):
 
     def _data_for_SRV(self, _type, records):
         values = []
-        # Now we expect a single record with multiple answers in answers_list
         record = records[0]
         answers = record.get('answers_list', [record.get('value', '')])
         for answer in answers:
@@ -298,22 +294,19 @@ class AzionProvider(BaseProvider):
         return {'type': _type, 'ttl': record['ttl'], 'values': values}
 
     def _data_for_TXT(self, _type, records):
-        """Handle TXT records with quote removal and semicolon escaping."""
+        """Handle TXT records with proper quote and semicolon handling."""
+        # Get all answers from the answers_list array
         answers, ttl = self._get_record_answers(records)
 
         values = []
         for answer in answers:
-            # Remove quotes if present
-            if (
-                answer.startswith('"')
-                and answer.endswith('"')
-                and len(answer) > 2
-            ):
-                answer = answer[1:-1]
-            # Escape semicolons for octoDNS compatibility
-            values.append(answer.replace(';', '\\;'))
+            if answer:  # Skip empty answers
+                answer = re.sub(r'(?<!\\);', r'\\;', answer)
+                values.append(answer)
 
-        return {'ttl': ttl, 'type': _type, 'values': values}
+        return_data = {'ttl': ttl, 'type': _type, 'values': values}
+        self.log.debug(f'_data_for_TXT: {return_data}')
+        return return_data
 
     def zone_records(self, zone):
         if zone.name not in self._zone_records:
@@ -408,7 +401,6 @@ class AzionProvider(BaseProvider):
         return exists
 
     def _params_for_multiple(self, record):
-        # Consolidate all values into a single record with multiple answers
         yield {
             'entry': '@' if not record.name else record.name,
             'record_type': record._type,
@@ -526,7 +518,6 @@ class AzionProvider(BaseProvider):
             ):
                 # Use record_update instead of delete/create
                 params_for = getattr(self, f'_params_for_{new._type}')
-                # Get the first (and only) params since we now consolidate all values
                 params = next(params_for(new))
                 self.log.debug(
                     '_apply_Update: updating record %s with params %s',

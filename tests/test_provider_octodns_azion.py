@@ -77,7 +77,6 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(provider.id, "test")
 
     def test_data_for_a_record(self):
-        # Now we expect a single record with multiple answers in answers_list
         records = [{"ttl": 300, "answers_list": ["1.2.3.4", "5.6.7.8"]}]
 
         result = self.provider._data_for_A("A", records)
@@ -138,7 +137,7 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(result, expected)
 
     def test_data_for_txt_record(self):
-        # Now we expect a single record with multiple answers in answers_list
+        # Test multiple values in single record's answers_list
         records = [
             {
                 "ttl": 300,
@@ -155,9 +154,58 @@ class TestAzionProvider(unittest.TestCase):
             "ttl": 300,
             "type": "TXT",
             "values": [
-                "v=spf1 include:_spf.example.com ~all",
-                "another txt record",
+                '"v=spf1 include:_spf.example.com ~all"',
+                '"another txt record"',
             ],
+        }
+        self.assertEqual(result, expected)
+
+    def test_data_for_txt_multiple_values_real_scenario(self):
+        # Test real scenario: single record with multiple values in answers_list
+        records = [
+            {
+                "ttl": 3600,
+                "answers_list": [
+                    "_globalsign-domain-verification=hoX_CURoCJLs3msafmeY7hPiQmelFOne1B8ER_Xj1r",
+                    '"v=spf1 include:_spf.google.com ~all"',
+                ],
+            }
+        ]
+
+        result = self.provider._data_for_TXT("TXT", records)
+
+        expected = {
+            "ttl": 3600,
+            "type": "TXT",
+            "values": [
+                "_globalsign-domain-verification=hoX_CURoCJLs3msafmeY7hPiQmelFOne1B8ER_Xj1r",
+                '"v=spf1 include:_spf.google.com ~all"',  # Quotes preserved
+            ],
+        }
+        self.assertEqual(result, expected)
+
+    def test_data_for_txt_with_empty_answers(self):
+        # Test TXT records with empty/null answers in answers_list
+        records = [
+            {
+                "ttl": 300,
+                "answers_list": [
+                    "valid_answer",
+                    "",  # Empty string
+                    '"quoted_answer"',
+                    None,  # None value
+                    "another_valid",
+                ],
+            }
+        ]
+
+        result = self.provider._data_for_TXT("TXT", records)
+
+        # Should skip empty/None answers and process only valid ones
+        expected = {
+            "ttl": 300,
+            "type": "TXT",
+            "values": ["valid_answer", '"quoted_answer"', "another_valid"],
         }
         self.assertEqual(result, expected)
 
@@ -407,7 +455,7 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params[0]['entry'], 'test')
         self.assertEqual(params[0]['record_type'], 'TXT')
         self.assertEqual(params[0]['ttl'], 300)
-        # Now we expect the raw values, without quotes
+        # We expect the raw values as they are
         expected_answers = [
             'v=spf1 include:_spf.example.com ~all',
             'v=DKIM1\\; k=rsa\\; p=MIGfMA0GCS...',
@@ -864,9 +912,7 @@ class TestAzionProvider(unittest.TestCase):
         )
 
         results = list(self.provider._params_for_multiple(record))
-        self.assertEqual(
-            len(results), 1
-        )  # Now returns single record with all values
+        self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['answers_list'], ['1.2.3.4', '5.6.7.8'])
         self.assertEqual(results[0]['entry'], 'test')
         self.assertEqual(results[0]['record_type'], 'A')
@@ -1157,7 +1203,8 @@ class TestAzionProvider(unittest.TestCase):
 
         params_list = list(self.provider._params_for_TXT(record))
         self.assertEqual(len(params_list), 1)
-        # OctoDNS normalizes removing external quotes; provider passes through
+        # OctoDNS normalizes by removing external quotes during Record processing
+        # Provider passes through the normalized values
         self.assertEqual(
             params_list[0]['answers_list'], ['already quoted', 'not quoted']
         )
@@ -1412,14 +1459,10 @@ class TestAzionProvider(unittest.TestCase):
 
         result = self.provider._data_for_TXT('TXT', records)
         self.assertEqual(len(result['values']), 4)
-        self.assertEqual(
-            result['values'][0], 'quoted text'
-        )  # Should remove quotes
-        self.assertEqual(result['values'][1], 'unquoted')  # Should keep as is
-        self.assertEqual(result['values'][2], '""')  # Should keep empty quotes
-        self.assertEqual(
-            result['values'][3], 'text\\;with\\;semicolons'
-        )  # Should escape semicolons
+        self.assertEqual(result['values'][0], '"quoted text"')
+        self.assertEqual(result['values'][1], 'unquoted')
+        self.assertEqual(result['values'][2], '""')
+        self.assertEqual(result['values'][3], 'text\\;with\\;semicolons')
 
     def test_data_for_mx_with_insufficient_parts(self):
         # Test branch coverage for MX records with insufficient parts
