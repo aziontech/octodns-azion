@@ -1209,6 +1209,30 @@ class TestAzionProvider(unittest.TestCase):
             params_list[0]['answers_list'], ['already quoted', 'not quoted']
         )
 
+    def test_params_for_ns(self):
+        from octodns.record import Record
+
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'letsencrypt',
+            {
+                'type': 'NS',
+                'ttl': 3600,
+                'values': ['glb-br1-hav001s.infra.azion.net.'],
+            },
+        )
+
+        params = list(self.provider._params_for_NS(record))
+        self.assertEqual(len(params), 1)
+        self.assertEqual(params[0]['entry'], 'letsencrypt')
+        self.assertEqual(params[0]['record_type'], 'NS')
+        self.assertEqual(params[0]['ttl'], 3600)
+        # Should remove trailing dot for Azion API
+        self.assertEqual(
+            params[0]['answers_list'], ['glb-br1-hav001s.infra.azion.net']
+        )
+
     def test_params_for_srv_with_dot_target(self):
         # Test branch coverage for SRV target that is just '.'
         zone = Zone('example.com.', [])

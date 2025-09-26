@@ -410,7 +410,17 @@ class AzionProvider(BaseProvider):
 
     _params_for_A = _params_for_multiple
     _params_for_AAAA = _params_for_multiple
-    _params_for_NS = _params_for_multiple
+
+    def _params_for_NS(self, record):
+        """Handle NS records by removing trailing dots for Azion API."""
+        # Azion API expects NS records without trailing dots
+        ns_values = [value.rstrip('.') for value in record.values]
+        yield {
+            'entry': '@' if not record.name else record.name,
+            'record_type': record._type,
+            'ttl': record.ttl,
+            'answers_list': ns_values,
+        }
 
     def _params_for_CAA(self, record):
         answers = []
