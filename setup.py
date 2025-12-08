@@ -20,7 +20,8 @@ def version():
 
 description, long_description = descriptions()
 
-tests_require = ('pytest', 'pytest-cov', 'pytest-network')
+# pytest<9.0 required for Python 3.9 compatibility
+tests_require = ('pytest>=8.0.0,<9.0.0', 'pytest-cov>=6.0.0', 'pytest-network')
 
 setup(
     author='Marcus Grando',
@@ -29,20 +30,18 @@ setup(
     extras_require={
         'dev': tests_require
         + (
-            # we need to manually/explicitely bump major versions as they're
-            # likely to result in formatting changes that should happen in their
-            # own PR. This will basically happen yearly
+            # black has yearly style changes, bump manually when ready
             # https://black.readthedocs.io/en/stable/the_black_code_style/index.html#stability-policy
-            'black>=24.3.0,<25.0.0',
-            'build>=0.7.0',
-            'isort>=5.11.5',
-            'pyflakes>=2.2.0',
-            'readme_renderer[md]>=26.0',
-            'twine>=3.4.2',
+            'black>=24.3.0,<26.0.0',
+            'build>=1.0.0',
+            'isort>=5.13.0',
+            'pyflakes>=3.2.0',
+            'readme_renderer[md]>=44.0',
+            'twine>=6.0.0',
         ),
         'test': tests_require,
     },
-    install_requires=('octodns>=1.12.0', 'requests>=2.32.4'),
+    install_requires=('octodns>=1.12.0', 'requests>=2.32.5'),
     license='MIT',
     long_description=long_description,
     long_description_content_type='text/markdown',
