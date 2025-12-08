@@ -11,7 +11,9 @@ from octodns.zone import Zone
 
 from octodns_azion import (
     AzionClient,
+    AzionClientBadRequest,
     AzionClientException,
+    AzionClientForbidden,
     AzionClientNotFound,
     AzionClientUnauthorized,
     AzionProvider,
@@ -88,16 +90,6 @@ class TestAzionProvider(unittest.TestCase):
         records = [{"ttl": 300, "answers_list": ["example.com"]}]
         result = self.provider._data_for_CNAME("CNAME", records)
         expected = {"ttl": 300, "type": "CNAME", "value": "example.com."}
-        self.assertEqual(result, expected)
-
-    def test_data_for_aname_record(self):
-        records = [{"ttl": 20, "answers_list": ["0001a.ha.azioncdn.net"]}]
-        result = self.provider._data_for_ANAME("ANAME", records)
-        expected = {
-            "ttl": 20,
-            "type": "ANAME",
-            "value": "0001a.ha.azioncdn.net.",
-        }
         self.assertEqual(result, expected)
 
     def test_data_for_ptr_record(self):
@@ -270,6 +262,85 @@ class TestAzionProvider(unittest.TestCase):
                 self.assertEqual(
                     len(records[2]["answers_list"]), 3
                 )  # Subdomain record
+
+    def test_zone_records_stores_raw_records(self):
+        # Test that zone_records stores raw API records for later use
+        zone = Zone("example.com.", [])
+
+        mock_records = [
+            {
+                "record_id": 1,
+                "entry": "weighted",
+                "record_type": "A",
+                "ttl": 300,
+                "answers_list": ["1.2.3.4"],
+                "policy": "weighted",
+                "weight": 70,
+                "description": "Primary server",
+            },
+            {
+                "record_id": 2,
+                "entry": "simple",
+                "record_type": "A",
+                "ttl": 300,
+                "answers_list": ["5.6.7.8"],
+            },
+        ]
+
+        with patch.object(
+            self.provider._client, "records", return_value=mock_records
+        ):
+            with patch.object(
+                self.provider, "_get_zone_id_by_name", return_value=123
+            ):
+                records = self.provider.zone_records(zone)
+
+                # Check transformed records have policy/weight/description
+                weighted_record = next(
+                    r for r in records if r['name'] == 'weighted'
+                )
+                self.assertEqual(weighted_record["policy"], "weighted")
+                self.assertEqual(weighted_record["weight"], 70)
+                self.assertEqual(
+                    weighted_record["description"], "Primary server"
+                )
+
+                simple_record = next(
+                    r for r in records if r['name'] == 'simple'
+                )
+                self.assertEqual(simple_record["policy"], "simple")
+                self.assertIsNone(simple_record["weight"])
+
+                # Check raw records were stored
+                self.assertIn(zone.name, self.provider._zone_raw_records)
+                self.assertEqual(
+                    len(self.provider._zone_raw_records[zone.name]), 2
+                )
+
+    def test_caches_cleared_after_apply(self):
+        # Test that caches are cleared after _apply completes
+        zone = Zone("example.com.", [])
+        plan = Mock()
+        plan.desired = zone
+        plan.changes = []
+
+        # Pre-populate caches
+        self.provider._zone_records["example.com."] = [{"id": 1}]
+        self.provider._zone_raw_records["example.com."] = [{"record_id": 1}]
+        self.provider._zone_records["other.com."] = [{"id": 2}]
+        self.provider._zone_raw_records["other.com."] = [{"record_id": 2}]
+
+        with patch.object(
+            self.provider, "_get_zone_id_by_name", return_value=123
+        ):
+            self.provider._apply(plan)
+
+        # Caches for example.com should be cleared
+        self.assertNotIn("example.com.", self.provider._zone_records)
+        self.assertNotIn("example.com.", self.provider._zone_raw_records)
+        # Caches for other.com should remain
+        self.assertIn("other.com.", self.provider._zone_records)
+        self.assertIn("other.com.", self.provider._zone_raw_records)
 
     @patch.object(AzionClient, "zones")
     def test_list_zones(self, mock_zones):
@@ -609,8 +680,14 @@ class TestAzionProvider(unittest.TestCase):
         self.assertFalse(self.provider.SUPPORTS_ROOT_NS)
 
     def test_supports_dynamic(self):
-        # Test that provider doesn't support dynamic records
-        self.assertFalse(self.provider.SUPPORTS_DYNAMIC)
+        # Test that provider supports dynamic records (weighted)
+        self.assertTrue(self.provider.SUPPORTS_DYNAMIC)
+        # Check supported dynamic types
+        self.assertIn('A', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        self.assertIn('AAAA', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        self.assertIn('CNAME', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        self.assertIn('ALIAS', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        self.assertIn('MX', self.provider.SUPPORTS_DYNAMIC_TYPES)
 
     def test_client_methods_exist(self):
         # Test that AzionClient methods exist and are callable
@@ -660,6 +737,68 @@ class TestAzionProvider(unittest.TestCase):
         # Test AzionClientUnauthorized exception creation
         exc = AzionClientUnauthorized()
         self.assertEqual(str(exc), 'Unauthorized')
+
+    def test_azion_client_forbidden_exception(self):
+        # Test AzionClientForbidden exception creation
+        exc = AzionClientForbidden()
+        self.assertEqual(str(exc), 'Forbidden')
+
+        exc_custom = AzionClientForbidden('Custom forbidden message')
+        self.assertEqual(str(exc_custom), 'Custom forbidden message')
+
+    def test_azion_client_bad_request_exception(self):
+        # Test AzionClientBadRequest exception creation
+        exc = AzionClientBadRequest()
+        self.assertEqual(str(exc), 'Bad Request')
+
+        exc_with_details = AzionClientBadRequest(
+            details={'error': 'invalid field'}, request_data={'name': 'test'}
+        )
+        self.assertIn("{'error': 'invalid field'}", str(exc_with_details))
+        self.assertIn("{'name': 'test'}", str(exc_with_details))
+        self.assertEqual(exc_with_details.details, {'error': 'invalid field'})
+        self.assertEqual(exc_with_details.request_data, {'name': 'test'})
+
+    def test_client_request_forbidden_real(self):
+        # Test _request method with 403 status code
+        client = AzionClient('test-token')
+
+        mock_response = Mock()
+        mock_response.status_code = 403
+        client._sess.request = Mock(return_value=mock_response)
+
+        with self.assertRaises(AzionClientForbidden):
+            client._request('GET', '/test')
+
+    def test_client_request_bad_request_with_json(self):
+        # Test _request method with 400 status code and JSON error
+        client = AzionClient('test-token')
+
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.json.return_value = {'error': 'invalid_field'}
+        client._sess.request = Mock(return_value=mock_response)
+
+        with self.assertRaises(AzionClientBadRequest) as ctx:
+            client._request('GET', '/test', data={'name': 'test'})
+
+        self.assertEqual(ctx.exception.details, {'error': 'invalid_field'})
+        self.assertEqual(ctx.exception.request_data, {'name': 'test'})
+
+    def test_client_request_bad_request_with_text(self):
+        # Test _request method with 400 status code and text error
+        client = AzionClient('test-token')
+
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.json.side_effect = ValueError('No JSON')
+        mock_response.text = 'Bad request error text'
+        client._sess.request = Mock(return_value=mock_response)
+
+        with self.assertRaises(AzionClientBadRequest) as ctx:
+            client._request('GET', '/test')
+
+        self.assertEqual(ctx.exception.details, 'Bad request error text')
 
     def test_client_request_unauthorized_real(self):
         # Test _request method with real 401 status code to trigger line 47
@@ -798,8 +937,11 @@ class TestAzionProvider(unittest.TestCase):
     @patch.object(AzionClient, '_request')
     def test_client_record_create_method(self, mock_request):
         # Test record_create method
+        # Note: API response uses 'id' not 'record_id' for POST/PUT responses
         mock_response = Mock()
-        mock_response.json.return_value = {'results': {'record_id': 1}}
+        mock_response.json.return_value = {
+            'results': {'id': 1, 'entry': 'test'}
+        }
         mock_request.return_value = mock_response
 
         client = AzionClient('test-token')
@@ -810,13 +952,16 @@ class TestAzionProvider(unittest.TestCase):
         }
         result = client.record_create(1, params)
 
-        self.assertEqual(result, {'results': {'record_id': 1}})
+        self.assertEqual(result, {'results': {'id': 1, 'entry': 'test'}})
 
     @patch.object(AzionClient, '_request')
     def test_client_record_update_method(self, mock_request):
         # Test record_update method
+        # Note: API response uses 'id' not 'record_id' for POST/PUT responses
         mock_response = Mock()
-        mock_response.json.return_value = {'results': {'record_id': 1}}
+        mock_response.json.return_value = {
+            'results': {'id': 1, 'entry': 'test'}
+        }
         mock_request.return_value = mock_response
 
         client = AzionClient('test-token')
@@ -827,7 +972,7 @@ class TestAzionProvider(unittest.TestCase):
         }
         result = client.record_update(1, 1, params)
 
-        self.assertEqual(result, {'results': {'record_id': 1}})
+        self.assertEqual(result, {'results': {'id': 1, 'entry': 'test'}})
 
     @patch.object(AzionClient, '_request')
     def test_client_record_delete_method(self, mock_request):
@@ -978,6 +1123,58 @@ class TestAzionProvider(unittest.TestCase):
                     'record_type': 'A',
                     'ttl': 600,
                     'answers_list': ['5.6.7.8'],
+                    'policy': 'simple',  # Default metadata
+                },
+            )
+
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_preserves_metadata(
+        self, mock_zone_records, mock_get_zone_id
+    ):
+        # Test _apply_Update preserves policy, weight, description from zone_records
+        existing = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
+        )
+        new = Record.new(
+            Zone('example.com.', []),
+            'test',
+            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
+        )
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        # zone_records now includes metadata directly in the record dict
+        mock_zone_records.return_value = [
+            {
+                'id': 'record123',
+                'name': 'test',
+                'type': 'A',
+                'policy': 'simple',
+                'weight': 50,
+                'description': 'Test record',
+            }
+        ]
+        mock_get_zone_id.return_value = 'zone123'
+
+        with patch.object(
+            self.provider._client, 'record_update'
+        ) as mock_record_update:
+            self.provider._apply_Update(change)
+            mock_record_update.assert_called_once_with(
+                'zone123',
+                'record123',
+                {
+                    'entry': 'test',
+                    'record_type': 'A',
+                    'ttl': 600,
+                    'answers_list': ['5.6.7.8'],
+                    'policy': 'simple',
+                    'weight': 50,
+                    'description': 'Test record',
                 },
             )
 
@@ -1098,6 +1295,7 @@ class TestAzionProvider(unittest.TestCase):
                         '1.2.3.4',
                         '5.6.7.8',
                     ],  # All values in single payload
+                    'policy': 'simple',  # Default metadata
                 },
             )
 
@@ -1632,23 +1830,6 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(result['ttl'], 300)
         self.assertEqual(result['type'], 'CNAME')
 
-    def test_data_for_aname_skip_dot_addition(self):
-        # Test specific branch coverage for ANAME when value already ends with dot (branch 223->225)
-        records = [
-            {
-                'ttl': 300,
-                'answers_list': [
-                    'target.azioncdn.net.'
-                ],  # Value already has dot
-            }
-        ]
-
-        result = self.provider._data_for_ANAME('ANAME', records)
-        # Verify the value is unchanged (dot not added)
-        self.assertEqual(result['value'], 'target.azioncdn.net.')
-        self.assertEqual(result['ttl'], 300)
-        self.assertEqual(result['type'], 'ANAME')
-
     def test_zone_records_cache_hit(self):
         # Test branch coverage for zone_records when zone is already cached (323->361)
         zone = Zone('example.com.', [])
@@ -1785,6 +1966,887 @@ class TestAzionProvider(unittest.TestCase):
         exception_str = str(cm.exception)
         self.assertIn('Bad request error text', exception_str)
         self.assertIn('Request data', exception_str)
+
+    def test_is_dynamic_records_weighted(self):
+        # Test _is_dynamic_records returns True for weighted policy
+        records = [{'policy': 'weighted', 'name': 'test'}]
+        self.assertTrue(self.provider._is_dynamic_records(records))
+
+    def test_is_dynamic_records_multiple(self):
+        # Test _is_dynamic_records returns True for multiple records
+        records = [
+            {'policy': 'simple', 'name': 'test'},
+            {'policy': 'simple', 'name': 'test'},
+        ]
+        self.assertTrue(self.provider._is_dynamic_records(records))
+
+    def test_is_dynamic_records_simple(self):
+        # Test _is_dynamic_records returns False for single simple record
+        records = [{'policy': 'simple', 'name': 'test'}]
+        self.assertFalse(self.provider._is_dynamic_records(records))
+
+    def test_is_dynamic_records_empty(self):
+        # Test _is_dynamic_records returns False for empty list
+        self.assertFalse(self.provider._is_dynamic_records([]))
+
+    def test_data_for_dynamic_weighted_a_records(self):
+        # Test conversion of weighted A records to dynamic format
+        records = [
+            {
+                'name': 'www',
+                'type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.1.1.1'],
+                'policy': 'weighted',
+                'weight': 170,  # ~10 in octoDNS scale
+            },
+            {
+                'name': 'www',
+                'type': 'A',
+                'ttl': 300,
+                'answers_list': ['2.2.2.2'],
+                'policy': 'weighted',
+                'weight': 85,  # ~5 in octoDNS scale
+            },
+        ]
+
+        data = self.provider._data_for_dynamic('A', records)
+
+        # Check dynamic structure
+        self.assertIn('dynamic', data)
+        self.assertIn('pools', data['dynamic'])
+        self.assertIn('weighted', data['dynamic']['pools'])
+        self.assertEqual(len(data['dynamic']['pools']['weighted']['values']), 2)
+        self.assertEqual(data['dynamic']['rules'], [{'pool': 'weighted'}])
+        self.assertEqual(data['values'], ['1.1.1.1', '2.2.2.2'])
+        self.assertEqual(data['ttl'], 300)
+
+    def test_is_dynamic_record_with_dynamic_attr(self):
+        # Test _is_dynamic_record returns True when record has dynamic attr
+        record = Mock()
+        record.dynamic = {'pools': {}, 'rules': []}
+        self.assertTrue(self.provider._is_dynamic_record(record))
+
+    def test_is_dynamic_record_without_dynamic_attr(self):
+        # Test _is_dynamic_record returns False when record has no dynamic attr
+        record = Mock(spec=[])  # No dynamic attribute
+        self.assertFalse(self.provider._is_dynamic_record(record))
+
+    def test_data_for_dynamic_multiple_answers_list(self):
+        # Test weighted record with multiple values in answers_list
+        # This validates API behavior where a single weighted record
+        # might have multiple IPs - they should share the same weight
+        records = [
+            {
+                'name': 'lb',
+                'type': 'A',
+                'ttl': 300,
+                'answers_list': [
+                    '1.1.1.1',
+                    '1.1.1.2',
+                ],  # Multiple IPs, same weight
+                'policy': 'weighted',
+                'weight': 170,
+            },
+            {
+                'name': 'lb',
+                'type': 'A',
+                'ttl': 300,
+                'answers_list': ['2.2.2.1'],  # Single IP, different weight
+                'policy': 'weighted',
+                'weight': 85,
+            },
+        ]
+
+        data = self.provider._data_for_dynamic('A', records)
+
+        # Should have 3 values total (2 from first record, 1 from second)
+        self.assertEqual(len(data['dynamic']['pools']['weighted']['values']), 3)
+        self.assertEqual(data['values'], ['1.1.1.1', '1.1.1.2', '2.2.2.1'])
+
+        # Values from same record should have same weight
+        pool_values = data['dynamic']['pools']['weighted']['values']
+        # First two values should have same weight (from record with weight 170)
+        self.assertEqual(pool_values[0]['weight'], pool_values[1]['weight'])
+        # Third value should have different weight (from record with weight 85)
+        self.assertNotEqual(pool_values[0]['weight'], pool_values[2]['weight'])
+
+    def test_params_for_dynamic_creates_single_value_records(self):
+        # Test that _params_for_dynamic creates separate records with single values
+        # This is the correct pattern for Azion weighted DNS
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        # Should create 2 separate records (one per value)
+        self.assertEqual(len(params_list), 2)
+
+        # Each record should have single value in answers_list
+        self.assertEqual(len(params_list[0]['answers_list']), 1)
+        self.assertEqual(len(params_list[1]['answers_list']), 1)
+
+        # Each should have weighted policy
+        self.assertEqual(params_list[0]['policy'], 'weighted')
+        self.assertEqual(params_list[1]['policy'], 'weighted')
+
+        # Values should be different IPs
+        self.assertEqual(params_list[0]['answers_list'][0], '1.1.1.1')
+        self.assertEqual(params_list[1]['answers_list'][0], '2.2.2.2')
+
+        # Weights should be converted to Azion scale (1-15 -> 0-255)
+        # weight 10 -> ~170, weight 5 -> ~85
+        self.assertGreater(params_list[0]['weight'], params_list[1]['weight'])
+
+    def test_get_azion_config_with_config(self):
+        # Test _get_azion_config returns azion config when present
+        record = Mock()
+        record.octodns = {'azion': {'description': 'test'}}
+        config = self.provider._get_azion_config(record)
+        self.assertEqual(config, {'description': 'test'})
+
+    def test_get_azion_config_without_config(self):
+        # Test _get_azion_config returns empty dict when no config
+        record = Mock()
+        record.octodns = {}
+        config = self.provider._get_azion_config(record)
+        self.assertEqual(config, {})
+
+    def test_get_azion_config_no_octodns_attr(self):
+        # Test _get_azion_config returns empty dict when no octodns attr
+        record = Mock(spec=[])
+        config = self.provider._get_azion_config(record)
+        self.assertEqual(config, {})
+
+    def test_get_description_simple_record(self):
+        # Test _get_description returns description for simple records
+        record = Mock()
+        record.octodns = {'azion': {'description': 'Main web server'}}
+        description = self.provider._get_description(record)
+        self.assertEqual(description, 'Main web server')
+
+    def test_get_description_no_description(self):
+        # Test _get_description returns empty string when no description
+        record = Mock()
+        record.octodns = {'azion': {}}
+        description = self.provider._get_description(record)
+        self.assertEqual(description, '')
+
+    def test_get_description_for_value_with_descriptions(self):
+        # Test _get_description_for_value returns description for specific value
+        record = Mock()
+        record.octodns = {
+            'azion': {
+                'descriptions': {
+                    '1.1.1.1': 'Primary server',
+                    '2.2.2.2': 'Secondary server',
+                }
+            }
+        }
+        self.assertEqual(
+            self.provider._get_description_for_value(record, '1.1.1.1'),
+            'Primary server',
+        )
+        self.assertEqual(
+            self.provider._get_description_for_value(record, '2.2.2.2'),
+            'Secondary server',
+        )
+
+    def test_get_description_for_value_not_found(self):
+        # Test _get_description_for_value returns empty string when value not found
+        record = Mock()
+        record.octodns = {'azion': {'descriptions': {'1.1.1.1': 'Server'}}}
+        description = self.provider._get_description_for_value(
+            record, '3.3.3.3'
+        )
+        self.assertEqual(description, '')
+
+    def test_simple_record_with_custom_description(self):
+        # Test that simple records use octodns.azion.description
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone, 'www', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
+        )
+        # Manually set octodns config (simulating YAML config)
+        record.octodns = {'azion': {'description': 'Main web server'}}
+
+        params = next(self.provider._params_for_A(record))
+        self.assertEqual(params['description'], 'Main web server')
+
+    def test_dynamic_record_with_custom_descriptions(self):
+        # Test that dynamic records use octodns.azion.descriptions
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+        # Set custom descriptions
+        record.octodns = {
+            'azion': {
+                'descriptions': {
+                    '1.1.1.1': 'Primary DC',
+                    '2.2.2.2': 'Secondary DC',
+                }
+            }
+        }
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        self.assertEqual(params_list[0]['description'], 'Primary DC')
+        self.assertEqual(params_list[1]['description'], 'Secondary DC')
+
+    def test_dynamic_record_without_custom_descriptions_no_description(self):
+        # Test that dynamic records have no description when not provided
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'mypool': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'mypool'}],
+                },
+            },
+        )
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        # Should NOT have description field when not provided
+        self.assertNotIn('description', params_list[0])
+        self.assertNotIn('description', params_list[1])
+
+    def test_is_weighted_record(self):
+        # Test _is_weighted_record helper method
+        weighted_record = {'policy': 'weighted', 'name': 'test'}
+        simple_record = {'policy': 'simple', 'name': 'test'}
+        no_policy_record = {'name': 'test'}
+
+        self.assertTrue(self.provider._is_weighted_record(weighted_record))
+        self.assertFalse(self.provider._is_weighted_record(simple_record))
+        self.assertFalse(self.provider._is_weighted_record(no_policy_record))
+
+    def test_build_params_with_empty_metadata_policy(self):
+        # Test _build_params with metadata that has empty/None policy (branch 549->551)
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone, 'test', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
+        )
+
+        # Metadata with empty policy - should not add policy to params
+        metadata = {'policy': '', 'weight': None, 'description': ''}
+        params = self.provider._build_params(
+            record, ['1.2.3.4'], metadata=metadata
+        )
+
+        # Should not have policy, weight, or description when empty
+        self.assertNotIn('policy', params)
+        self.assertNotIn('weight', params)
+        self.assertNotIn('description', params)
+
+    def test_get_raw_records_for(self):
+        # Test _get_raw_records_for helper method
+        zone_name = 'example.com.'
+
+        # Populate raw records cache
+        self.provider._zone_raw_records[zone_name] = [
+            {'entry': '@', 'record_type': 'A', 'answers_list': ['1.1.1.1']},
+            {'entry': 'www', 'record_type': 'A', 'answers_list': ['2.2.2.2']},
+            {
+                'entry': '@',
+                'record_type': 'ANAME',
+                'answers_list': ['cdn.example.com'],
+            },
+        ]
+
+        # Test finding root A record (empty string = @)
+        result = self.provider._get_raw_records_for(zone_name, '', 'A')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['answers_list'], ['1.1.1.1'])
+
+        # Test finding www A record
+        result = self.provider._get_raw_records_for(zone_name, 'www', 'A')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['answers_list'], ['2.2.2.2'])
+
+        # Test ALIAS -> ANAME conversion
+        result = self.provider._get_raw_records_for(zone_name, '', 'ALIAS')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['record_type'], 'ANAME')
+
+        # Test non-existent record
+        result = self.provider._get_raw_records_for(
+            zone_name, 'nonexistent', 'A'
+        )
+        self.assertEqual(len(result), 0)
+
+        # Test zone not in cache
+        result = self.provider._get_raw_records_for('other.com.', 'www', 'A')
+        self.assertEqual(len(result), 0)
+
+    def test_data_for_dynamic_weight_zero(self):
+        # Test _data_for_dynamic with weight=0 (should normalize to 1)
+        records = [
+            {
+                'name': 'test',
+                'type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.1.1.1'],
+                'policy': 'weighted',
+                'weight': 0,  # Zero weight
+            }
+        ]
+
+        data = self.provider._data_for_dynamic('A', records)
+
+        # Weight 0 should be normalized to 1
+        pool_values = data['dynamic']['pools']['weighted']['values']
+        self.assertEqual(pool_values[0]['weight'], 1)
+
+    def test_data_for_dynamic_cname(self):
+        # Test _data_for_dynamic with CNAME type
+        records = [
+            {
+                'name': 'www',
+                'type': 'CNAME',
+                'ttl': 300,
+                'answers_list': ['target1.example.com'],
+                'policy': 'weighted',
+                'weight': 170,
+            },
+            {
+                'name': 'www',
+                'type': 'CNAME',
+                'ttl': 300,
+                'answers_list': ['target2.example.com'],
+                'policy': 'weighted',
+                'weight': 85,
+            },
+        ]
+
+        data = self.provider._data_for_dynamic('CNAME', records)
+
+        # Should have 'value' not 'values' for CNAME
+        self.assertIn('value', data)
+        self.assertNotIn('values', data)
+        # Value should have trailing dot added
+        self.assertEqual(data['value'], 'target1.example.com.')
+
+    def test_data_for_dynamic_alias(self):
+        # Test _data_for_dynamic with ALIAS type
+        records = [
+            {
+                'name': '',
+                'type': 'ALIAS',
+                'ttl': 300,
+                'answers_list': ['cdn.example.com'],
+                'policy': 'weighted',
+                'weight': 255,
+            }
+        ]
+
+        data = self.provider._data_for_dynamic('ALIAS', records)
+
+        # Should have 'value' not 'values' for ALIAS
+        self.assertIn('value', data)
+        # Value should have trailing dot added
+        self.assertEqual(data['value'], 'cdn.example.com.')
+
+    def test_data_for_dynamic_mx(self):
+        # Test _data_for_dynamic with MX type
+        records = [
+            {
+                'name': '',
+                'type': 'MX',
+                'ttl': 300,
+                'answers_list': ['10 mail1.example.com'],
+                'policy': 'weighted',
+                'weight': 170,
+            },
+            {
+                'name': '',
+                'type': 'MX',
+                'ttl': 300,
+                'answers_list': ['20 mail2.example.com'],
+                'policy': 'weighted',
+                'weight': 85,
+            },
+        ]
+
+        data = self.provider._data_for_dynamic('MX', records)
+
+        # Should have 'values' for MX
+        self.assertIn('values', data)
+        self.assertEqual(len(data['values']), 2)
+        # MX values should be kept as-is
+        self.assertIn('10 mail1.example.com', data['values'])
+
+    def test_data_for_dynamic_mx_invalid_format(self):
+        # Test _data_for_dynamic with MX invalid format (branch coverage 435->440)
+        records = [
+            {
+                'name': '',
+                'type': 'MX',
+                'ttl': 300,
+                'answers_list': ['mail.example.com'],  # Missing priority
+                'policy': 'weighted',
+                'weight': 170,
+            }
+        ]
+
+        data = self.provider._data_for_dynamic('MX', records)
+
+        # Should still include the value
+        self.assertIn('values', data)
+        self.assertEqual(len(data['values']), 1)
+
+    def test_data_for_dynamic_cname_with_trailing_dot(self):
+        # Test _data_for_dynamic with CNAME that already has trailing dot (branch 437->440)
+        records = [
+            {
+                'name': 'www',
+                'type': 'CNAME',
+                'ttl': 300,
+                'answers_list': ['target.example.com.'],  # Already has dot
+                'policy': 'weighted',
+                'weight': 170,
+            },
+            {
+                'name': 'www',
+                'type': 'CNAME',
+                'ttl': 300,
+                'answers_list': ['target2.example.com.'],  # Already has dot
+                'policy': 'weighted',
+                'weight': 85,
+            },
+        ]
+
+        data = self.provider._data_for_dynamic('CNAME', records)
+
+        # Value should keep trailing dot (not add another)
+        self.assertEqual(data['value'], 'target.example.com.')
+
+    def test_params_for_dynamic_cname(self):
+        # Test _params_for_dynamic with CNAME type
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'www',
+            {
+                'type': 'CNAME',
+                'ttl': 300,
+                'value': 'target1.example.com.',
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': 'target1.example.com.', 'weight': 10},
+                                {'value': 'target2.example.com.', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        self.assertEqual(len(params_list), 2)
+        # CNAME value should have trailing dot stripped
+        self.assertEqual(
+            params_list[0]['answers_list'], ['target1.example.com']
+        )
+        self.assertEqual(params_list[0]['record_type'], 'CNAME')
+
+    def test_params_for_dynamic_alias(self):
+        # Test _params_for_dynamic with ALIAS type
+        # Note: ALIAS dynamic records are supported by Azion but octoDNS doesn't
+        # natively support ALIAS dynamic records, so we mock the record
+        record = Mock()
+        record.name = ''
+        record._type = 'ALIAS'
+        record.ttl = 300
+        record.octodns = {}
+
+        # Mock dynamic attribute
+        pool_data = Mock()
+        pool_data.data = {
+            'values': [
+                {'value': 'cdn1.example.com.', 'weight': 10},
+                {'value': 'cdn2.example.com.', 'weight': 5},
+            ]
+        }
+        record.dynamic = Mock()
+        record.dynamic.pools = {'weighted': pool_data}
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        self.assertEqual(len(params_list), 2)
+        # ALIAS value should have trailing dot stripped
+        self.assertEqual(params_list[0]['answers_list'], ['cdn1.example.com'])
+        # ALIAS should be converted to ANAME for API
+        self.assertEqual(params_list[0]['record_type'], 'ANAME')
+
+    def test_params_for_dynamic_mx(self):
+        # Test _params_for_dynamic with MX type
+        # Note: MX dynamic records are supported by Azion but octoDNS doesn't
+        # natively support MX dynamic records, so we mock the record
+        record = Mock()
+        record.name = ''
+        record._type = 'MX'
+        record.ttl = 300
+        record.octodns = {}
+
+        # Mock dynamic attribute
+        pool_data = Mock()
+        pool_data.data = {
+            'values': [
+                {'value': 'mail1.example.com.', 'weight': 10},
+                {'value': 'mail2.example.com.', 'weight': 5},
+            ]
+        }
+        record.dynamic = Mock()
+        record.dynamic.pools = {'weighted': pool_data}
+
+        params_list = list(self.provider._params_for_dynamic(record))
+
+        self.assertEqual(len(params_list), 2)
+        # MX should format as "preference exchange"
+        self.assertEqual(
+            params_list[0]['answers_list'], ['10 mail1.example.com']
+        )
+        self.assertEqual(params_list[0]['record_type'], 'MX')
+
+    @patch.object(AzionClient, 'record_create')
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    def test_apply_create_dynamic_record(
+        self, mock_get_zone_id, mock_record_create
+    ):
+        # Test _apply_Create with dynamic record
+        zone = Zone('example.com.', [])
+        record = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+
+        mock_get_zone_id.return_value = 25
+        mock_record_create.return_value = {'results': {'id': 1}}
+
+        change = Mock()
+        change.new = record
+
+        self.provider._apply_Create(change)
+
+        # Should create 2 records (one per weighted value)
+        self.assertEqual(mock_record_create.call_count, 2)
+
+    @patch.object(AzionClient, 'record_create')
+    @patch.object(AzionClient, 'record_delete')
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_dynamic_record(
+        self,
+        mock_zone_records,
+        mock_get_zone_id,
+        mock_record_delete,
+        mock_record_create,
+    ):
+        # Test _apply_Update with dynamic record
+        zone = Zone('example.com.', [])
+        existing = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '3.3.3.3'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '3.3.3.3', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+        new = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+
+        mock_zone_records.return_value = [
+            {'id': 100, 'name': 'lb', 'type': 'A'},
+            {'id': 101, 'name': 'lb', 'type': 'A'},
+        ]
+        mock_get_zone_id.return_value = 25
+        mock_record_create.return_value = {'results': {'id': 1}}
+
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        self.provider._apply_Update(change)
+
+        # Should delete existing records
+        self.assertEqual(mock_record_delete.call_count, 2)
+        # Should create 2 new records
+        self.assertEqual(mock_record_create.call_count, 2)
+
+    @patch.object(AzionClient, 'record_create')
+    @patch.object(AzionClient, 'record_delete')
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_dynamic_to_simple(
+        self,
+        mock_zone_records,
+        mock_get_zone_id,
+        mock_record_delete,
+        mock_record_create,
+    ):
+        # Test _apply_Update changing from dynamic to simple record
+        zone = Zone('example.com.', [])
+        existing = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+        new = Record.new(
+            zone,
+            'lb',
+            {'type': 'A', 'ttl': 300, 'value': '3.3.3.3'},  # Simple record
+        )
+
+        mock_zone_records.return_value = [
+            {'id': 100, 'name': 'lb', 'type': 'A'},
+            {'id': 101, 'name': 'lb', 'type': 'A'},
+        ]
+        mock_get_zone_id.return_value = 25
+        mock_record_create.return_value = {'results': {'id': 1}}
+
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        self.provider._apply_Update(change)
+
+        # Should delete both existing records
+        self.assertEqual(mock_record_delete.call_count, 2)
+        # Should create 1 simple record
+        self.assertEqual(mock_record_create.call_count, 1)
+
+    @patch.object(AzionClient, 'record_create')
+    @patch.object(AzionClient, 'record_delete')
+    @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, 'zone_records')
+    def test_apply_update_dynamic_no_matching_records(
+        self,
+        mock_zone_records,
+        mock_get_zone_id,
+        mock_record_delete,
+        mock_record_create,
+    ):
+        # Test _apply_Update with dynamic record when zone_records has non-matching records
+        # This covers branch 701->700 where loop continues without hitting the if block
+        zone = Zone('example.com.', [])
+        existing = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '2.2.2.2'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '2.2.2.2', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+        new = Record.new(
+            zone,
+            'lb',
+            {
+                'type': 'A',
+                'ttl': 300,
+                'values': ['1.1.1.1', '3.3.3.3'],
+                'dynamic': {
+                    'pools': {
+                        'weighted': {
+                            'values': [
+                                {'value': '1.1.1.1', 'weight': 10},
+                                {'value': '3.3.3.3', 'weight': 5},
+                            ]
+                        }
+                    },
+                    'rules': [{'pool': 'weighted'}],
+                },
+            },
+        )
+
+        # Return records that don't match 'lb' A
+        mock_zone_records.return_value = [
+            {'id': 100, 'name': 'other', 'type': 'A'},  # Different name
+            {'id': 101, 'name': 'lb', 'type': 'CNAME'},  # Different type
+        ]
+        mock_get_zone_id.return_value = 25
+        mock_record_create.return_value = {'results': {'id': 1}}
+
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        self.provider._apply_Update(change)
+
+        # Should NOT delete any records (none match)
+        mock_record_delete.assert_not_called()
+        # Should create 2 new records
+        self.assertEqual(mock_record_create.call_count, 2)
+
+    @patch.object(AzionClient, 'zones')
+    @patch.object(AzionClient, 'records')
+    def test_populate_with_weighted_records(self, mock_records, mock_zones):
+        # Test populate correctly identifies and processes weighted records
+        mock_zones.return_value = [{'domain': 'example.com', 'id': 25}]
+        mock_records.return_value = [
+            {
+                'record_id': 1,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.1.1.1'],
+                'policy': 'weighted',
+                'weight': 170,
+            },
+            {
+                'record_id': 2,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['2.2.2.2'],
+                'policy': 'weighted',
+                'weight': 85,
+            },
+        ]
+
+        zone = Zone('example.com.', [])
+        self.provider.populate(zone)
+
+        # Should have 1 record (the two weighted records should be merged)
+        self.assertEqual(len(zone.records), 1)
+
+        # Find the lb record
+        lb_record = None
+        for record in zone.records:
+            if record.name == 'lb':
+                lb_record = record
+                break
+
+        self.assertIsNotNone(lb_record)
+        # Should be a dynamic record
+        self.assertTrue(hasattr(lb_record, 'dynamic'))
+        self.assertIsNotNone(lb_record.dynamic)
 
 
 if __name__ == "__main__":
