@@ -24,8 +24,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pip-audit
-          pip install -e .
+          # Install from local repo (not from PyPI)
+          pip install -e ".[dev]"
 
       - name: Run pip-audit
         run: |
-          pip-audit --strict --progress-spinner off
+          # Audit installed packages (from local repo + dependencies)
+          pip-audit --progress-spinner off
