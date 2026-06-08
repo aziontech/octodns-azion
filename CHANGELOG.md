@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## v1.2.0 - 2026-06-08
+
+### Changed
+* Updated runtime dependencies to current stable releases, including `octodns==1.19.0`, `requests==2.34.2`, and `urllib3==2.7.0`
+* Updated development tooling to current stable releases, including `black==26.5.1`, `pytest==9.0.3`, and `isort==8.0.1`
+* Raised the supported Python baseline to Python 3.10 or newer so patched dependency versions can be used
+* Updated GitHub Actions artifact actions and aligned publish/security workflows with Python 3.14
+
+### Security
+* Resolved known dependency vulnerabilities reported by `pip-audit`
+
 ## v1.1.0 - 2025-12-08
 
 ### Features
