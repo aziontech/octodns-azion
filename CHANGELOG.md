@@ -63,6 +63,15 @@
   `X-RateLimit-Reset`; `AzionClientRateLimited` is raised when retries run out
 * End-to-end plan/apply/plan tests against a stateful fake of the v3 API
 
+### Changed
+* Updated runtime and development dependencies, including `octodns==1.22.0`,
+  `urllib3==2.8.0` and `black==26.10.1`
+* Updated GitHub Actions to `actions/setup-python@v7` and `actions/stale@v11`
+
+### Security
+* Resolved the `urllib3` vulnerabilities GHSA-vxq7-64xx-v4gw and
+  GHSA-gh4c-6fx4-qh6g by updating to 2.8.0
+
 ## v1.2.0 - 2026-06-08
 
 ### Changed
