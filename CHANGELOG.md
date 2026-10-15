@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## v1.3.0 - 2026-10-15
+
+### Fixes
+* Dynamic records now converge instead of planning an update on every sync:
+  weights are written as-is (octoDNS uses 1-100, not 1-15), the pool and
+  status are read the way octoDNS expects, and pool values/`values` are
+  normalized during planning
+* Azion weight 0 (record kept but never answered) is read as `status: down` and
+  written back as weight 0 instead of reactivating the record with weight 17
+* Geo/subnet rules, multiple pools and fallbacks are no longer silently dropped,
+  they raise `SupportsException` (or fall back to the catch-all pool with
+  `strict_supports: false`)
+* Weighted MX and ANAME records no longer break `populate()` for the whole zone,
+  they are read as simple records with a warning. `SUPPORTS_DYNAMIC_TYPES` is
+  now A, AAAA and CNAME, the only types octoDNS can make dynamic
+* A single weighted record no longer fails strict validation
+  (`pool has single value with weight!=1`), and weighted records without a
+  weight use the Azion default instead of raising `TypeError`
+* Updates reuse the existing API records in place and leave unchanged values
+  alone, instead of deleting every record before recreating them
+* Values that answer are written before others are turned down or deleted, so
+  a name keeps answering if an update fails part way through
+* Legacy data with several simple records for a name/type can be converted to
+  weighted records, and is no longer read as a dynamic record
+* Updates always send `policy`, which the API otherwise resets to `simple`
+* Multiple API records for the same name/type are merged instead of reading
+  only the first one, and consolidated when updated
+* Record names and zone domains are compared case-insensitively
+* A 404 while listing the records of an existing zone is raised instead of
+  being treated as a missing zone
+* The id of a newly created zone is used instead of listing zones again
+* Caches are cleared even when an apply fails part way through
+* Configured descriptions take precedence over stored ones
+* Planning compares the API records themselves, so changes octoDNS can't see
+  are planned too: descriptions of weighted records, the traffic split of
+  weights above 100, per-record TTLs, weighted records answering several
+  values together and duplicate records
+* Azion weights above 100 are scaled down keeping their proportions instead of
+  being clamped to 100
+* Records the Azion API rejects fail while planning with
+  `AzionUnsupportedRecord`, instead of part way through an apply: null MX,
+  more than 10 values, TTLs below 1, TXT values with newlines or tabs or
+  longer than 1000 characters in total, AAAA addresses ending in `::`, CAA
+  flags other than 0/128 or unsupported characters, ANAME targets outside
+  azioncdn.net, azionedge.net and azionedge.com, and descriptions longer than
+  45 characters
+* ALIAS records with a TTL other than 20, which Azion requires for ANAME
+  records, raise `SupportsException` (or use 20 with `strict_supports: false`)
+* ANAME records outside the zone root, which octoDNS ALIAS records can't
+  represent, are skipped with a warning instead of breaking `populate()` or
+  being planned for deletion
+* TXT answers stored with quotes are read with escaped quotes. They were
+  parsed as octoDNS chunks, so a stored `"foo" "bar"` matched `foobar`
+* `;` after an escaped backslash in a stored TXT answer is escaped
+* Zones created for domains longer than 50 characters get a name the API
+  accepts
+
+### Added
+* `timeout` (default 30s) for API requests and `max_retries` (default 5) for
+  rate limited (HTTP 429) requests, honoring `Retry-After` and
+  `X-RateLimit-Reset`; `AzionClientRateLimited` is raised when retries run out
+* End-to-end plan/apply/plan tests against a stateful fake of the v3 API
+
+### Changed
+* Updated runtime and development dependencies, including `octodns==1.22.0`,
+  `urllib3==2.8.0` and `black==26.10.1`
+* Updated GitHub Actions to `actions/setup-python@v7` and `actions/stale@v11`
+
+### Security
+* Resolved the `urllib3` vulnerabilities GHSA-vxq7-64xx-v4gw and
+  GHSA-gh4c-6fx4-qh6g by updating to 2.8.0
+
 ## v1.2.0 - 2026-06-08
 
 ### Changed
