@@ -49,7 +49,11 @@ class TestAzionClient(unittest.TestCase):
 
         self.assertEqual(result, mock_resp)
         mock_sess.request.assert_called_once_with(
-            "GET", "https://api.azionapi.net/test", params=None, json=None
+            "GET",
+            "https://api.azionapi.net/test",
+            params=None,
+            json=None,
+            timeout=30,
         )
 
     @patch("octodns_azion.Session")
@@ -75,7 +79,9 @@ class TestAzionProvider(unittest.TestCase):
     def test_provider_init(self, mock_client_class):
         provider = AzionProvider("test", "test-token")
 
-        mock_client_class.assert_called_once_with("test-token")
+        mock_client_class.assert_called_once_with(
+            "test-token", timeout=30, max_retries=5
+        )
         self.assertEqual(provider.id, "test")
 
     def test_data_for_a_record(self):
@@ -145,9 +151,10 @@ class TestAzionProvider(unittest.TestCase):
         expected = {
             "ttl": 300,
             "type": "TXT",
+            # stored quotes are served, they aren't octoDNS chunks
             "values": [
-                '"v=spf1 include:_spf.example.com ~all"',
-                '"another txt record"',
+                r'\"v=spf1 include:_spf.example.com ~all\"',
+                r'\"another txt record\"',
             ],
         }
         self.assertEqual(result, expected)
@@ -171,7 +178,7 @@ class TestAzionProvider(unittest.TestCase):
             "type": "TXT",
             "values": [
                 "_globalsign-domain-verification=hoX_CURoCJLs3msafmeY7hPiQmelFOne1B8ER_Xj1r",
-                '"v=spf1 include:_spf.google.com ~all"',  # Quotes preserved
+                r'\"v=spf1 include:_spf.google.com ~all\"',  # Quotes escaped
             ],
         }
         self.assertEqual(result, expected)
@@ -197,7 +204,7 @@ class TestAzionProvider(unittest.TestCase):
         expected = {
             "ttl": 300,
             "type": "TXT",
-            "values": ["valid_answer", '"quoted_answer"', "another_valid"],
+            "values": ["valid_answer", r'\"quoted_answer\"', "another_valid"],
         }
         self.assertEqual(result, expected)
 
@@ -686,8 +693,9 @@ class TestAzionProvider(unittest.TestCase):
         self.assertIn('A', self.provider.SUPPORTS_DYNAMIC_TYPES)
         self.assertIn('AAAA', self.provider.SUPPORTS_DYNAMIC_TYPES)
         self.assertIn('CNAME', self.provider.SUPPORTS_DYNAMIC_TYPES)
-        self.assertIn('ALIAS', self.provider.SUPPORTS_DYNAMIC_TYPES)
-        self.assertIn('MX', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        # octoDNS has no dynamic support for ALIAS or MX
+        self.assertNotIn('ALIAS', self.provider.SUPPORTS_DYNAMIC_TYPES)
+        self.assertNotIn('MX', self.provider.SUPPORTS_DYNAMIC_TYPES)
 
     def test_client_methods_exist(self):
         # Test that AzionClient methods exist and are callable
@@ -875,14 +883,7 @@ class TestAzionProvider(unittest.TestCase):
         result = client.zone_create('example.com')
 
         self.assertEqual(
-            result,
-            {
-                'results': {
-                    'id': 1,
-                    'name': 'example.com',
-                    'domain': 'example.com',
-                }
-            },
+            result, {'id': 1, 'name': 'example.com', 'domain': 'example.com'}
         )
 
     @patch.object(AzionClient, '_request')
@@ -1026,6 +1027,7 @@ class TestAzionProvider(unittest.TestCase):
             'record_type': 'CNAME',
             'ttl': 300,
             'answers_list': ['target.example.com'],
+            'policy': 'simple',
         }
         self.assertEqual(results[0], expected)
 
@@ -1065,10 +1067,11 @@ class TestAzionProvider(unittest.TestCase):
 
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    def test_apply_create_real(self, mock_get_zone_id, mock_record_create):
+    @patch.object(AzionProvider, '_raw_records', return_value=[])
+    def test_apply_create_real(
+        self, mock_raw_records, mock_get_zone_id, mock_record_create
+    ):
         # Test _apply_Create with real record creation
-        from octodns.record import Record
-
         zone = Zone('example.com.', [])
         record = Record.new(
             zone, 'test', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
@@ -1087,8 +1090,8 @@ class TestAzionProvider(unittest.TestCase):
         mock_record_create.assert_called_once()
 
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
-    def test_apply_update_real(self, mock_zone_records, mock_get_zone_id):
+    @patch.object(AzionProvider, '_raw_records')
+    def test_apply_update_real(self, mock_raw_records, mock_get_zone_id):
         # Test _apply_Update finds matching record and calls record_update
         existing = Record.new(
             Zone('example.com.', []),
@@ -1098,64 +1101,26 @@ class TestAzionProvider(unittest.TestCase):
         new = Record.new(
             Zone('example.com.', []),
             'test',
-            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
-        )
-        change = Mock()
-        change.existing = existing
-        change.new = new
-
-        # Mock zone records to return a matching record
-        mock_zone_records.return_value = [
-            {'id': 'record123', 'name': 'test', 'type': 'A'}
-        ]
-        mock_get_zone_id.return_value = 'zone123'
-
-        # Mock the client's record_update method
-        with patch.object(
-            self.provider._client, 'record_update'
-        ) as mock_record_update:
-            self.provider._apply_Update(change)
-            mock_record_update.assert_called_once_with(
-                'zone123',
-                'record123',
-                {
-                    'entry': 'test',
-                    'record_type': 'A',
-                    'ttl': 600,
-                    'answers_list': ['5.6.7.8'],
-                    'policy': 'simple',  # Default metadata
-                },
-            )
-
-    @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
-    def test_apply_update_preserves_metadata(
-        self, mock_zone_records, mock_get_zone_id
-    ):
-        # Test _apply_Update preserves policy, weight, description from zone_records
-        existing = Record.new(
-            Zone('example.com.', []),
-            'test',
-            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
-        )
-        new = Record.new(
-            Zone('example.com.', []),
-            'test',
-            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
-        )
-        change = Mock()
-        change.existing = existing
-        change.new = new
-
-        # zone_records now includes metadata directly in the record dict
-        mock_zone_records.return_value = [
             {
-                'id': 'record123',
-                'name': 'test',
                 'type': 'A',
+                'ttl': 600,
+                'value': '5.6.7.8',
+                'octodns': {'azion': {'description': 'from config'}},
+            },
+        )
+        change = Mock()
+        change.existing = existing
+        change.new = new
+
+        mock_raw_records.return_value = [
+            {
+                'record_id': 'record123',
+                'entry': 'test',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.2.3.4'],
                 'policy': 'simple',
-                'weight': 50,
-                'description': 'Test record',
+                'description': 'old',
             }
         ]
         mock_get_zone_id.return_value = 'zone123'
@@ -1173,17 +1138,18 @@ class TestAzionProvider(unittest.TestCase):
                     'ttl': 600,
                     'answers_list': ['5.6.7.8'],
                     'policy': 'simple',
-                    'weight': 50,
-                    'description': 'Test record',
+                    # the configured description wins over the stored one
+                    'description': 'from config',
                 },
             )
 
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
+    @patch.object(AzionProvider, '_raw_records', return_value=[])
     def test_apply_update_no_matching_records(
-        self, mock_zone_records, mock_get_zone_id
+        self, mock_raw_records, mock_get_zone_id
     ):
-        # Test _apply_Update when no matching records are found (branch coverage)
+        # Test _apply_Update when the record is gone from the API: it is
+        # created rather than silently skipped
         existing = Record.new(
             Zone('example.com.', []),
             'test',
@@ -1198,65 +1164,21 @@ class TestAzionProvider(unittest.TestCase):
         change.existing = existing
         change.new = new
 
-        # Mock zone records to return empty list (no records)
-        mock_zone_records.return_value = []
         mock_get_zone_id.return_value = 'zone123'
 
-        # Mock the client's record_update method to ensure it's not called
         with patch.object(
             self.provider._client, 'record_update'
-        ) as mock_record_update:
+        ) as mock_record_update, patch.object(
+            self.provider._client, 'record_create'
+        ) as mock_record_create:
             self.provider._apply_Update(change)
-            # Should not call record_update when no matching records
             mock_record_update.assert_not_called()
+            mock_record_create.assert_called_once()
 
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
-    def test_apply_update_no_matching_records_different_name_type(
-        self, mock_zone_records, mock_get_zone_id
-    ):
-        # Test _apply_Update when records exist but don't match name/type (branch coverage)
-        existing = Record.new(
-            Zone('example.com.', []),
-            'test',
-            {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'},
-        )
-        new = Record.new(
-            Zone('example.com.', []),
-            'test',
-            {'type': 'A', 'ttl': 600, 'value': '5.6.7.8'},
-        )
-        change = Mock()
-        change.existing = existing
-        change.new = new
-
-        # Mock zone records to return records that don't match
-        mock_zone_records.return_value = [
-            {
-                'id': 'record123',
-                'name': 'different',
-                'type': 'A',
-            },  # Different name
-            {
-                'id': 'record456',
-                'name': 'test',
-                'type': 'CNAME',
-            },  # Different type
-        ]
-        mock_get_zone_id.return_value = 'zone123'
-
-        # Mock the client's record_update method to ensure it's not called
-        with patch.object(
-            self.provider._client, 'record_update'
-        ) as mock_record_update:
-            self.provider._apply_Update(change)
-            # Should not call record_update when no matching records
-            mock_record_update.assert_not_called()
-
-    @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
+    @patch.object(AzionProvider, '_raw_records')
     def test_apply_update_multiple_values(
-        self, mock_zone_records, mock_get_zone_id
+        self, mock_raw_records, mock_get_zone_id
     ):
         # Test _apply_Update with multiple values (consolidated payload)
         existing = Record.new(
@@ -1273,13 +1195,18 @@ class TestAzionProvider(unittest.TestCase):
         change.existing = existing
         change.new = new
 
-        # Mock zone records to return a matching record
-        mock_zone_records.return_value = [
-            {'id': 'record123', 'name': 'test', 'type': 'A'}
+        mock_raw_records.return_value = [
+            {
+                'record_id': 'record123',
+                'entry': 'test',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.2.3.4'],
+                'policy': 'simple',
+            }
         ]
         mock_get_zone_id.return_value = 'zone123'
 
-        # Mock the client's record_update method
         with patch.object(
             self.provider._client, 'record_update'
         ) as mock_record_update:
@@ -1295,7 +1222,7 @@ class TestAzionProvider(unittest.TestCase):
                         '1.2.3.4',
                         '5.6.7.8',
                     ],  # All values in single payload
-                    'policy': 'simple',  # Default metadata
+                    'policy': 'simple',
                 },
             )
 
@@ -1456,7 +1383,7 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(params_list[0]['answers_list'], ['10 20 5060 .'])
 
     def test_apply_delete_with_matching_record(self):
-        # Test _apply_Delete when matching record is found (covers line 515)
+        # Test _apply_Delete deletes every matching API record
         zone = Zone('example.com.', [])
         existing = Record.new(
             zone, 'test', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
@@ -1464,12 +1391,20 @@ class TestAzionProvider(unittest.TestCase):
         change = Mock()
         change.existing = existing
 
-        # Mock zone_records to return matching record
-        with patch.object(self.provider, 'zone_records') as mock_zone_records:
-            mock_zone_records.return_value = [
-                {'id': 123, 'name': 'test', 'type': 'A'}  # Matching record
-            ]
-
+        with patch.object(
+            self.provider,
+            '_raw_records',
+            return_value=[
+                {
+                    'record_id': 123,
+                    'entry': 'test',
+                    'record_type': 'A',
+                    'ttl': 300,
+                    'answers_list': ['1.2.3.4'],
+                    'policy': 'simple',
+                }
+            ],
+        ):
             with patch.object(
                 self.provider, '_get_zone_id_by_name', return_value=1
             ):
@@ -1477,7 +1412,6 @@ class TestAzionProvider(unittest.TestCase):
                     self.provider._client, 'record_delete'
                 ) as mock_delete:
                     self.provider._apply_Delete(change)
-                    # Should call record_delete for matching record
                     mock_delete.assert_called_once_with(1, 123)
 
     def test_apply_with_zone_creation(self):
@@ -1501,8 +1435,8 @@ class TestAzionProvider(unittest.TestCase):
 
                 # Should call zone_create when zone is not found
                 mock_zone_create.assert_called_once_with('example.com')
-                # Should clear cache
-                self.assertNotIn('example.com.', self.provider._zone_cache)
+                # Should cache the id of the created zone
+                self.assertEqual(25, self.provider._zone_cache['example.com.'])
 
     def test_get_zone_id_by_name_zone_not_found(self):
         # Test branch coverage for zone not found in _get_zone_id_by_name
@@ -1681,9 +1615,9 @@ class TestAzionProvider(unittest.TestCase):
 
         result = self.provider._data_for_TXT('TXT', records)
         self.assertEqual(len(result['values']), 4)
-        self.assertEqual(result['values'][0], '"quoted text"')
+        self.assertEqual(result['values'][0], r'\"quoted text\"')
         self.assertEqual(result['values'][1], 'unquoted')
-        self.assertEqual(result['values'][2], '""')
+        self.assertEqual(result['values'][2], r'\"\"')
         self.assertEqual(result['values'][3], 'text\\;with\\;semicolons')
 
     def test_data_for_mx_with_insufficient_parts(self):
@@ -1754,12 +1688,7 @@ class TestAzionProvider(unittest.TestCase):
 
     def test_data_for_cname_value_already_has_dot(self):
         # Test branch coverage for CNAME value that already ends with dot (223->225)
-        records = [
-            {
-                'ttl': 300,
-                'value': 'example.com.',  # Already has dot, using 'value' instead of 'answers_list'
-            }
-        ]
+        records = [{'ttl': 300, 'answers_list': ['example.com.']}]
 
         result = self.provider._data_for_CNAME('CNAME', records)
         self.assertEqual(
@@ -1782,19 +1711,12 @@ class TestAzionProvider(unittest.TestCase):
             result['value'], 'target.example.com.'
         )  # Should keep existing dot
 
-    def test_data_for_alias_no_answers_list_with_dot(self):
-        # Test branch coverage for ALIAS without answers_list, fallback value has dot
-        records = [
-            {
-                'ttl': 300,
-                'value': 'fallback.example.com.',  # Fallback value has dot, no answers_list key
-            }
-        ]
+    def test_data_for_alias_no_answers_list(self):
+        # Records without answers_list have no value
+        records = [{'ttl': 300}]
 
         result = self.provider._data_for_ALIAS('ALIAS', records)
-        self.assertEqual(
-            result['value'], 'fallback.example.com.'
-        )  # Should keep existing dot
+        self.assertEqual(result['value'], '.')
 
     def test_data_for_alias_skip_dot_addition(self):
         # Test specific branch coverage for ALIAS when value already ends with dot (skip line 239)
@@ -1911,10 +1833,10 @@ class TestAzionProvider(unittest.TestCase):
         self.assertEqual(answers, ['test1', 'test2'])
         self.assertEqual(ttl, 300)
 
-        # Test with fallback to 'value' field
-        records = [{'ttl': 600, 'value': 'fallback'}]
+        # Records without answers_list have no answers
+        records = [{'ttl': 600}]
         answers, ttl = self.provider._get_record_answers(records)
-        self.assertEqual(answers, ['fallback'])
+        self.assertEqual(answers, [])
         self.assertEqual(ttl, 600)
 
     def test_ensure_trailing_dot_helper(self):
@@ -1973,12 +1895,12 @@ class TestAzionProvider(unittest.TestCase):
         self.assertTrue(self.provider._is_dynamic_records(records))
 
     def test_is_dynamic_records_multiple(self):
-        # Test _is_dynamic_records returns True for multiple records
+        # Several simple records are legacy duplicates, not weighted ones
         records = [
             {'policy': 'simple', 'name': 'test'},
             {'policy': 'simple', 'name': 'test'},
         ]
-        self.assertTrue(self.provider._is_dynamic_records(records))
+        self.assertFalse(self.provider._is_dynamic_records(records))
 
     def test_is_dynamic_records_simple(self):
         # Test _is_dynamic_records returns False for single simple record
@@ -2270,24 +2192,6 @@ class TestAzionProvider(unittest.TestCase):
         self.assertFalse(self.provider._is_weighted_record(simple_record))
         self.assertFalse(self.provider._is_weighted_record(no_policy_record))
 
-    def test_build_params_with_empty_metadata_policy(self):
-        # Test _build_params with metadata that has empty/None policy (branch 549->551)
-        zone = Zone('example.com.', [])
-        record = Record.new(
-            zone, 'test', {'type': 'A', 'ttl': 300, 'value': '1.2.3.4'}
-        )
-
-        # Metadata with empty policy - should not add policy to params
-        metadata = {'policy': '', 'weight': None, 'description': ''}
-        params = self.provider._build_params(
-            record, ['1.2.3.4'], metadata=metadata
-        )
-
-        # Should not have policy, weight, or description when empty
-        self.assertNotIn('policy', params)
-        self.assertNotIn('weight', params)
-        self.assertNotIn('description', params)
-
     def test_get_raw_records_for(self):
         # Test _get_raw_records_for helper method
         zone_name = 'example.com.'
@@ -2375,26 +2279,6 @@ class TestAzionProvider(unittest.TestCase):
         self.assertNotIn('values', data)
         # Value should have trailing dot added
         self.assertEqual(data['value'], 'target1.example.com.')
-
-    def test_data_for_dynamic_alias(self):
-        # Test _data_for_dynamic with ALIAS type
-        records = [
-            {
-                'name': '',
-                'type': 'ALIAS',
-                'ttl': 300,
-                'answers_list': ['cdn.example.com'],
-                'policy': 'weighted',
-                'weight': 255,
-            }
-        ]
-
-        data = self.provider._data_for_dynamic('ALIAS', records)
-
-        # Should have 'value' not 'values' for ALIAS
-        self.assertIn('value', data)
-        # Value should have trailing dot added
-        self.assertEqual(data['value'], 'cdn.example.com.')
 
     def test_data_for_dynamic_mx(self):
         # Test _data_for_dynamic with MX type
@@ -2503,69 +2387,11 @@ class TestAzionProvider(unittest.TestCase):
         )
         self.assertEqual(params_list[0]['record_type'], 'CNAME')
 
-    def test_params_for_dynamic_alias(self):
-        # Test _params_for_dynamic with ALIAS type
-        # Note: ALIAS dynamic records are supported by Azion but octoDNS doesn't
-        # natively support ALIAS dynamic records, so we mock the record
-        record = Mock()
-        record.name = ''
-        record._type = 'ALIAS'
-        record.ttl = 300
-        record.octodns = {}
-
-        # Mock dynamic attribute
-        pool_data = Mock()
-        pool_data.data = {
-            'values': [
-                {'value': 'cdn1.example.com.', 'weight': 10},
-                {'value': 'cdn2.example.com.', 'weight': 5},
-            ]
-        }
-        record.dynamic = Mock()
-        record.dynamic.pools = {'weighted': pool_data}
-
-        params_list = list(self.provider._params_for_dynamic(record))
-
-        self.assertEqual(len(params_list), 2)
-        # ALIAS value should have trailing dot stripped
-        self.assertEqual(params_list[0]['answers_list'], ['cdn1.example.com'])
-        # ALIAS should be converted to ANAME for API
-        self.assertEqual(params_list[0]['record_type'], 'ANAME')
-
-    def test_params_for_dynamic_mx(self):
-        # Test _params_for_dynamic with MX type
-        # Note: MX dynamic records are supported by Azion but octoDNS doesn't
-        # natively support MX dynamic records, so we mock the record
-        record = Mock()
-        record.name = ''
-        record._type = 'MX'
-        record.ttl = 300
-        record.octodns = {}
-
-        # Mock dynamic attribute
-        pool_data = Mock()
-        pool_data.data = {
-            'values': [
-                {'value': 'mail1.example.com.', 'weight': 10},
-                {'value': 'mail2.example.com.', 'weight': 5},
-            ]
-        }
-        record.dynamic = Mock()
-        record.dynamic.pools = {'weighted': pool_data}
-
-        params_list = list(self.provider._params_for_dynamic(record))
-
-        self.assertEqual(len(params_list), 2)
-        # MX should format as "preference exchange"
-        self.assertEqual(
-            params_list[0]['answers_list'], ['10 mail1.example.com']
-        )
-        self.assertEqual(params_list[0]['record_type'], 'MX')
-
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionProvider, '_get_zone_id_by_name')
+    @patch.object(AzionProvider, '_raw_records', return_value=[])
     def test_apply_create_dynamic_record(
-        self, mock_get_zone_id, mock_record_create
+        self, mock_raw_records, mock_get_zone_id, mock_record_create
     ):
         # Test _apply_Create with dynamic record
         zone = Zone('example.com.', [])
@@ -2598,21 +2424,27 @@ class TestAzionProvider(unittest.TestCase):
 
         self.provider._apply_Create(change)
 
-        # Should create 2 records (one per weighted value)
+        # Should create 2 records (one per weighted value), weights unscaled
         self.assertEqual(mock_record_create.call_count, 2)
+        weights = sorted(
+            c.args[1]['weight'] for c in mock_record_create.call_args_list
+        )
+        self.assertEqual([5, 10], weights)
 
+    @patch.object(AzionClient, 'record_update')
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionClient, 'record_delete')
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
+    @patch.object(AzionProvider, '_raw_records')
     def test_apply_update_dynamic_record(
         self,
-        mock_zone_records,
+        mock_raw_records,
         mock_get_zone_id,
         mock_record_delete,
         mock_record_create,
+        mock_record_update,
     ):
-        # Test _apply_Update with dynamic record
+        # Test _apply_Update with dynamic record reuses existing records
         zone = Zone('example.com.', [])
         existing = Record.new(
             zone,
@@ -2655,12 +2487,27 @@ class TestAzionProvider(unittest.TestCase):
             },
         )
 
-        mock_zone_records.return_value = [
-            {'id': 100, 'name': 'lb', 'type': 'A'},
-            {'id': 101, 'name': 'lb', 'type': 'A'},
+        mock_raw_records.return_value = [
+            {
+                'record_id': 100,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.1.1.1'],
+                'policy': 'weighted',
+                'weight': 10,
+            },
+            {
+                'record_id': 101,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['3.3.3.3'],
+                'policy': 'weighted',
+                'weight': 5,
+            },
         ]
         mock_get_zone_id.return_value = 25
-        mock_record_create.return_value = {'results': {'id': 1}}
 
         change = Mock()
         change.existing = existing
@@ -2668,21 +2515,27 @@ class TestAzionProvider(unittest.TestCase):
 
         self.provider._apply_Update(change)
 
-        # Should delete existing records
-        self.assertEqual(mock_record_delete.call_count, 2)
-        # Should create 2 new records
-        self.assertEqual(mock_record_create.call_count, 2)
+        # 1.1.1.1 is unchanged, 3.3.3.3 is rewritten in place as 2.2.2.2
+        mock_record_delete.assert_not_called()
+        mock_record_create.assert_not_called()
+        mock_record_update.assert_called_once()
+        record_id, params = mock_record_update.call_args.args[1:]
+        self.assertEqual(101, record_id)
+        self.assertEqual(['2.2.2.2'], params['answers_list'])
+        self.assertEqual(5, params['weight'])
 
+    @patch.object(AzionClient, 'record_update')
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionClient, 'record_delete')
     @patch.object(AzionProvider, '_get_zone_id_by_name')
-    @patch.object(AzionProvider, 'zone_records')
+    @patch.object(AzionProvider, '_raw_records')
     def test_apply_update_dynamic_to_simple(
         self,
-        mock_zone_records,
+        mock_raw_records,
         mock_get_zone_id,
         mock_record_delete,
         mock_record_create,
+        mock_record_update,
     ):
         # Test _apply_Update changing from dynamic to simple record
         zone = Zone('example.com.', [])
@@ -2712,12 +2565,31 @@ class TestAzionProvider(unittest.TestCase):
             {'type': 'A', 'ttl': 300, 'value': '3.3.3.3'},  # Simple record
         )
 
-        mock_zone_records.return_value = [
-            {'id': 100, 'name': 'lb', 'type': 'A'},
-            {'id': 101, 'name': 'lb', 'type': 'A'},
+        mock_raw_records.return_value = [
+            {
+                'record_id': 100,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['1.1.1.1'],
+                'policy': 'weighted',
+                'weight': 10,
+            },
+            {
+                'record_id': 101,
+                'entry': 'lb',
+                'record_type': 'A',
+                'ttl': 300,
+                'answers_list': ['2.2.2.2'],
+                'policy': 'weighted',
+                'weight': 5,
+            },
         ]
         mock_get_zone_id.return_value = 25
-        mock_record_create.return_value = {'results': {'id': 1}}
+
+        manager = Mock()
+        manager.attach_mock(mock_record_delete, 'delete')
+        manager.attach_mock(mock_record_update, 'update')
 
         change = Mock()
         change.existing = existing
@@ -2725,10 +2597,17 @@ class TestAzionProvider(unittest.TestCase):
 
         self.provider._apply_Update(change)
 
-        # Should delete both existing records
-        self.assertEqual(mock_record_delete.call_count, 2)
-        # Should create 1 simple record
-        self.assertEqual(mock_record_create.call_count, 1)
+        # The surplus weighted record goes first, a simple record can't
+        # coexist with it, then the remaining one becomes the simple record
+        self.assertEqual(
+            ['delete', 'update'], [c[0] for c in manager.mock_calls]
+        )
+        mock_record_delete.assert_called_once_with(25, 101)
+        mock_record_create.assert_not_called()
+        record_id, params = mock_record_update.call_args.args[1:]
+        self.assertEqual(100, record_id)
+        self.assertEqual('simple', params['policy'])
+        self.assertEqual(['3.3.3.3'], params['answers_list'])
 
     @patch.object(AzionClient, 'record_create')
     @patch.object(AzionClient, 'record_delete')
