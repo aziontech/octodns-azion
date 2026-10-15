@@ -11,7 +11,7 @@ from octodns.provider import ProviderException
 from octodns.provider.base import BaseProvider
 from octodns.record import Record, Update
 
-__version__ = __VERSION__ = '1.2.0'
+__version__ = __VERSION__ = '1.3.0'
 
 
 class AzionClientException(ProviderException):

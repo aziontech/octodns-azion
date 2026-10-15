@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## Unreleased
+## v1.3.0 - 2026-10-15
 
 ### Fixes
 * Dynamic records now converge instead of planning an update on every sync:
