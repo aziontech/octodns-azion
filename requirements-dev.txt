@@ -30,7 +30,7 @@ pytest-cov==7.1.0
 pytest==9.1.1
 pytest_network==0.0.1
 pytokens==0.4.1
-readme_renderer==44.0
+readme_renderer==46.0
 requests-toolbelt==1.0.0
 rfc3986==2.0.0
 rich==15.0.0
